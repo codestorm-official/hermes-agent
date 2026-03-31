@@ -43,12 +43,16 @@ ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 if not ADMIN_PASSWORD:
     ADMIN_PASSWORD = secrets.token_urlsafe(16)
-    print(f"[server] Generated admin password: {ADMIN_PASSWORD}", flush=True)
+    print(f"[server] Admin credentials — username: {ADMIN_USERNAME}  password: {ADMIN_PASSWORD}", flush=True)
+else:
+    print(f"[server] Admin username: {ADMIN_USERNAME}", flush=True)
 
 # ── Env var registry ──────────────────────────────────────────────────────────
 # (key, label, category, is_secret)
 ENV_VARS = [
     ("LLM_MODEL",               "Model",                    "model",     False),
+    ("OPENAI_API_KEY",           "OpenAI",                   "provider",  True),
+    ("ANTHROPIC_API_KEY",        "Anthropic",                "provider",  True),
     ("OPENROUTER_API_KEY",       "OpenRouter",               "provider",  True),
     ("DEEPSEEK_API_KEY",         "DeepSeek",                 "provider",  True),
     ("DASHSCOPE_API_KEY",        "DashScope",                "provider",  True),
@@ -82,6 +86,8 @@ ENV_VARS = [
     ("MATRIX_ACCESS_TOKEN",      "Access Token",             "matrix",    True),
     ("MATRIX_USER_ID",           "User ID",                  "matrix",    False),
     ("GATEWAY_ALLOW_ALL_USERS",  "Allow all users",          "gateway",   False),
+    ("ADMIN_USERNAME",           "Admin username",           "admin",     False),
+    ("ADMIN_PASSWORD",           "Admin password",           "admin",     True),
 ]
 
 SECRET_KEYS  = {k for k, _, _, s in ENV_VARS if s}
