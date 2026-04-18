@@ -21,4 +21,33 @@ for f in SOUL.md USER.md MEMORY.md; do
     fi
 done
 
+# Obsidian vault mount. When OBSIDIAN_VAULT_REPO_URL + OBSIDIAN_VAULT_GITHUB_TOKEN
+# are set, clone the private vault repo to /data/vault on first boot and
+# pull on subsequent boots. A background loop refreshes the vault every
+# 15 min so changes made in Obsidian (pushed by the Obsidian Git plugin)
+# propagate to the PA without a redeploy. OBSIDIAN_VAULT_PATH is exported
+# so the bundled note-taking/obsidian Hermes skill finds the vault.
+if [ -n "${OBSIDIAN_VAULT_REPO_URL:-}" ] && [ -n "${OBSIDIAN_VAULT_GITHUB_TOKEN:-}" ]; then
+    AUTHED_URL="${OBSIDIAN_VAULT_REPO_URL/https:\/\//https:\/\/x-access-token:${OBSIDIAN_VAULT_GITHUB_TOKEN}@}"
+    if [ -d /data/vault/.git ]; then
+        git -C /data/vault pull --ff-only 2>&1 | sed 's/^/[vault-pull] /' || true
+    else
+        rm -rf /data/vault 2>/dev/null || true
+        git clone --depth 50 "$AUTHED_URL" /data/vault 2>&1 | sed 's/^/[vault-clone] /' || true
+    fi
+
+    # Background pull loop - 15-minute interval. Errors swallowed so a transient
+    # network blip never crashes the gateway.
+    if [ -d /data/vault/.git ]; then
+        (
+            while true; do
+                sleep 900
+                git -C /data/vault pull --ff-only >/dev/null 2>&1 || true
+            done
+        ) &
+        echo "[vault] background pull loop started (PID $!)"
+    fi
+fi
+export OBSIDIAN_VAULT_PATH="${OBSIDIAN_VAULT_PATH:-/data/vault}"
+
 exec python /app/server.py
