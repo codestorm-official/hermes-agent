@@ -144,7 +144,15 @@ def write_config_yaml(data: dict[str, str]) -> None:
 
     model = data.get("LLM_MODEL", "")
     if model:
-        model_block = dict(current.get("model") or {})
+        # The model key can be a dict, a bare string (from `hermes config set
+        # model <name>`), or missing. Normalise to dict before updating.
+        raw = current.get("model")
+        if isinstance(raw, dict):
+            model_block = dict(raw)
+        elif isinstance(raw, str) and raw.strip():
+            model_block = {"default": raw.strip()}
+        else:
+            model_block = {}
         model_block["default"] = model
         current["model"] = model_block
 
