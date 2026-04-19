@@ -4,6 +4,20 @@ set -e
 mkdir -p /data/.hermes/sessions /data/.hermes/skills /data/.hermes/workspace /data/.hermes/pairing
 mkdir -p /data/wedding-invoices
 
+# Register our custom skills under the running Hermes's skill tree so they
+# show up in `hermes --skills ...` / discovery. Source of truth is
+# /opt/hermes-skills/ (built into the image); /data/.hermes/skills/ is
+# shadowed by the persistent volume, so we symlink instead of copying to
+# keep the source single.
+if [ -d /opt/hermes-skills ]; then
+    mkdir -p /data/.hermes/skills/productivity
+    for skill in /opt/hermes-skills/*/; do
+        [ -d "$skill" ] || continue
+        name=$(basename "$skill")
+        ln -sfn "$skill" "/data/.hermes/skills/productivity/$name"
+    done
+fi
+
 # Merge the git-tracked seed config into the persisted config.yaml. The seed
 # wins for everything except model.default and model.provider, which are
 # owned at runtime by the admin dashboard and `hermes model` / `codex_login`
