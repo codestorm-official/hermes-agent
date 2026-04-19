@@ -3,6 +3,7 @@
 import dynamic from 'next/dynamic';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import * as THREE from 'three';
 import { colorFor, LABEL_COLOR, LABEL_ORDER } from '@/lib/labels';
 import { communityColor, computeCommunities, COMMUNITY_COLORS } from '@/lib/clustering';
 import DetailPanel from './DetailPanel';
@@ -203,75 +204,196 @@ export default function Graph() {
     }
   }, [selectedId, data, is3D]);
 
-  // 3D-only: UnrealBloomPass + auto-rotate idle camera. Attached to the
-  // ref'd force-graph scene after the canvas mounts. Cleanup removes the
-  // pass and disables auto-rotate so a 2D<->3D toggle doesn't leak.
+  // 3D-only cinematic stack:
+  //  - UnrealBloomPass (core glow, existing)
+  //  - FilmPass (grain + faint scanline, analog feel)
+  //  - Custom ChromaticAberrationShader (tiny color fringe at screen edges)
+  //  - Custom VignetteShader (cinematic edge darkening)
+  //  - Auto-rotate controls with "breathing" idle motion on top
+  //  - Idle pause: any pointer/key input pauses auto-rotate + breathing for 30s
+  // All passes are wrapped in try/catch — a shader compile failure on older
+  // GPUs silently skips that one effect without breaking the whole graph.
   useEffect(() => {
     if (!is3D || !fgRef.current || !data || size.w === 0) return;
     let cancelled = false;
-    let passRef: any = null;
+    const addedPasses: any[] = [];
     let ctlRef: any = null;
+    let breathRafId: number | null = null;
+    let userInteracted = false;
+    let breathPauseUntil = 0;
 
     const attach = async () => {
       const three = await import('three');
       const { UnrealBloomPass } = await import(
         'three/examples/jsm/postprocessing/UnrealBloomPass.js'
       );
-      if (cancelled || !fgRef.current) return;
-      try {
-        const composer = fgRef.current.postProcessingComposer();
-        if (composer) {
-          const pass = new UnrealBloomPass(
-            new three.Vector2(size.w, size.h),
-            1.1, // strength - keep below 1.3 or it blooms like Vegas
-            0.7, // radius
-            0.85, // threshold - only brightest pixels glow
-          );
-          composer.addPass(pass);
-          passRef = pass;
-        }
-      } catch {
-        /* bloom-optional: older GPUs may fail the shader compile */
-      }
+      const { FilmPass } = await import(
+        'three/examples/jsm/postprocessing/FilmPass.js'
+      );
+      const { ShaderPass } = await import(
+        'three/examples/jsm/postprocessing/ShaderPass.js'
+      );
+      if (cancelled || !fgRef.current) return () => {};
+      const composer = fgRef.current.postProcessingComposer?.();
+      if (!composer) return () => {};
 
-      // Auto-rotate idle camera. Slow, starts active. Any pointer/key
-      // input pauses it for 30s, then it drifts back in.
+      const safeAdd = (label: string, fn: () => any) => {
+        try {
+          const pass = fn();
+          if (pass) {
+            composer.addPass(pass);
+            addedPasses.push(pass);
+          }
+        } catch (e) {
+          console.warn(`[graph fx] ${label} skipped:`, e);
+        }
+      };
+
+      safeAdd('bloom', () => new UnrealBloomPass(
+        new three.Vector2(size.w, size.h),
+        1.15, 0.72, 0.82,
+      ));
+
+      // Film grain + very faint scanlines. The constructor signature varies
+      // between three versions; pass intensity as first arg, rest default.
+      safeAdd('film', () => {
+        const fp: any = new (FilmPass as any)(
+          0.22,  // noise intensity
+          0.06,  // scanline intensity (very subtle)
+          2048,  // scanline count
+          false, // grayscale
+        );
+        return fp;
+      });
+
+      // Chromatic aberration — cheap GLSL, subtle color fringe near the edges
+      safeAdd('chromaticAberration', () => {
+        const shader = {
+          uniforms: {
+            tDiffuse: { value: null },
+            uOffset: { value: 0.0022 },
+          },
+          vertexShader: `
+            varying vec2 vUv;
+            void main() {
+              vUv = uv;
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+          `,
+          fragmentShader: `
+            uniform sampler2D tDiffuse;
+            uniform float uOffset;
+            varying vec2 vUv;
+            void main() {
+              vec2 dir = vUv - vec2(0.5);
+              float falloff = smoothstep(0.2, 0.9, length(dir));
+              float off = uOffset * falloff;
+              float r = texture2D(tDiffuse, vUv + dir * off).r;
+              float g = texture2D(tDiffuse, vUv).g;
+              float b = texture2D(tDiffuse, vUv - dir * off).b;
+              gl_FragColor = vec4(r, g, b, 1.0);
+            }
+          `,
+        };
+        return new (ShaderPass as any)(shader);
+      });
+
+      // Vignette — cinematic edge darkening
+      safeAdd('vignette', () => {
+        const shader = {
+          uniforms: {
+            tDiffuse: { value: null },
+            uDarkness: { value: 0.85 },
+            uOffset:   { value: 0.95 },
+          },
+          vertexShader: `
+            varying vec2 vUv;
+            void main() {
+              vUv = uv;
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+          `,
+          fragmentShader: `
+            uniform sampler2D tDiffuse;
+            uniform float uDarkness;
+            uniform float uOffset;
+            varying vec2 vUv;
+            void main() {
+              vec4 c = texture2D(tDiffuse, vUv);
+              vec2 p = vUv - vec2(0.5);
+              float d = length(p);
+              float v = smoothstep(uOffset, uOffset - 0.7, d);
+              c.rgb *= mix(1.0 - uDarkness, 1.0, v);
+              gl_FragColor = c;
+            }
+          `,
+        };
+        return new (ShaderPass as any)(shader);
+      });
+
+      // Auto-rotate idle camera plus breathing motion on top.
       const controls = fgRef.current.controls();
-      if (controls) {
-        controls.autoRotate = true;
-        controls.autoRotateSpeed = 0.3;
-        ctlRef = controls;
-        const bump = () => {
+      if (!controls) return () => {};
+      controls.autoRotate = true;
+      controls.autoRotateSpeed = 0.26;
+      ctlRef = controls;
+
+      // Breathing: gently drift controls.target on a slow Y+Z sine so the
+      // camera feels alive even when the user isn't orbiting. Adds ~0.6
+      // units of movement - enough to notice, not enough to disorient.
+      const baseTarget = controls.target.clone();
+      const t0 = performance.now();
+      const tick = (now: number) => {
+        if (cancelled || !ctlRef) return;
+        const t = (now - t0) / 1000;
+        // Pause breathing while user is interacting or within idle grace period.
+        const paused = now < breathPauseUntil;
+        if (!paused) {
+          ctlRef.target.set(
+            baseTarget.x,
+            baseTarget.y + Math.sin(t * 0.35) * 0.6,
+            baseTarget.z + Math.sin(t * 0.21 + 1.2) * 0.4,
+          );
+          ctlRef.update();
+        }
+        breathRafId = requestAnimationFrame(tick);
+      };
+      breathRafId = requestAnimationFrame(tick);
+
+      const bump = () => {
+        if (!ctlRef) return;
+        userInteracted = true;
+        ctlRef.autoRotate = false;
+        breathPauseUntil = performance.now() + 30_000;
+        if (idleTimer.current) clearTimeout(idleTimer.current);
+        idleTimer.current = setTimeout(() => {
           if (!ctlRef) return;
-          ctlRef.autoRotate = false;
-          if (idleTimer.current) clearTimeout(idleTimer.current);
-          idleTimer.current = setTimeout(() => {
-            if (ctlRef) ctlRef.autoRotate = true;
-          }, 30_000);
-        };
-        const target = wrapRef.current;
-        target?.addEventListener('pointermove', bump);
-        target?.addEventListener('pointerdown', bump);
-        window.addEventListener('keydown', bump);
-        return () => {
-          target?.removeEventListener('pointermove', bump);
-          target?.removeEventListener('pointerdown', bump);
-          window.removeEventListener('keydown', bump);
-        };
-      }
-      return () => {};
+          ctlRef.autoRotate = true;
+          userInteracted = false;
+        }, 30_000);
+      };
+      const target = wrapRef.current;
+      target?.addEventListener('pointermove', bump);
+      target?.addEventListener('pointerdown', bump);
+      window.addEventListener('keydown', bump);
+      return () => {
+        target?.removeEventListener('pointermove', bump);
+        target?.removeEventListener('pointerdown', bump);
+        window.removeEventListener('keydown', bump);
+      };
     };
 
     const cleanup = attach();
     return () => {
       cancelled = true;
       if (idleTimer.current) clearTimeout(idleTimer.current);
+      if (breathRafId != null) cancelAnimationFrame(breathRafId);
       if (ctlRef) ctlRef.autoRotate = false;
-      cleanup.then((fn) => fn && fn());
-      if (passRef && fgRef.current) {
+      cleanup.then((fn) => fn && fn()).catch(() => {});
+      if (fgRef.current && addedPasses.length) {
         try {
-          const composer = fgRef.current.postProcessingComposer();
-          composer?.removePass?.(passRef);
+          const composer = fgRef.current.postProcessingComposer?.();
+          for (const p of addedPasses) composer?.removePass?.(p);
         } catch {
           /* ignore */
         }
@@ -386,6 +508,26 @@ export default function Graph() {
               : colorFor(n.label);
           }}
           nodeOpacity={nodeOpacity3D as any}
+          nodeThreeObjectExtend={true}
+          nodeThreeObject={(n: Node) => {
+            // Extend the default sphere mesh with a halo ring for big hubs
+            // (Buero Birnbaum, RA Ostendorf, EstateMate, etc.). degree=25
+            // threshold ~matches top ~8-12 hub nodes in the graph. Hermes's
+            // force-graph-3d default node is a sphere sized by nodeRelSize;
+            // we only add a ring on top via nodeThreeObjectExtend=true.
+            if (n.degree < 25) return null;
+            const radius = 3 + Math.min(n.degree, 40) * 0.45;
+            const geom = new THREE.TorusGeometry(radius * 1.35, 0.18, 12, 48);
+            const mat = new THREE.MeshBasicMaterial({
+              color: selectedId === n.id ? 0xfb923c : 0xfde68a,
+              transparent: true,
+              opacity: 0.32,
+            });
+            const ring = new THREE.Mesh(geom, mat);
+            ring.rotation.x = Math.PI / 2;
+            (ring as any).userData.isHubHalo = true;
+            return ring;
+          }}
           linkColor={linkColor}
           linkWidth={linkWidth}
           linkOpacity={0.55}
