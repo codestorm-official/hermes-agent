@@ -35,6 +35,7 @@ COPY codex_login.py /app/codex_login.py
 COPY server.py /app/server.py
 COPY templates/ /app/templates/
 COPY graph-ingester/ /app/graph-ingester/
+COPY graph-mcp/ /app/graph-mcp/
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 

@@ -12,3 +12,18 @@ agent:
   max_iterations: 50
 
 data_dir: "/data/.hermes"
+
+# Graph MCP server. Launches a stdio-based FastMCP subprocess inside the
+# container; the server wraps Neo4j with five read-only Cypher tools so
+# Hermes can ask "what do I know about X" during reasoning. Gated on
+# NEO4J_URI being set (interpolated at runtime by Hermes' own loader).
+mcp_servers:
+  graph:
+    command: "python"
+    args: ["/app/graph-mcp/server.py"]
+    env:
+      NEO4J_URI: "${NEO4J_URI}"
+      NEO4J_USER: "${NEO4J_USER}"
+      NEO4J_PASSWORD: "${NEO4J_PASSWORD}"
+    timeout: 30
+
