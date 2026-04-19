@@ -119,6 +119,59 @@ main {
 
 .stat-value.accent { color: var(--accent); }
 
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  justify-self: end;
+}
+
+.ingest-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  padding: 4px 10px 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: help;
+}
+
+.ingest-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.ingest-dot.tone-ok {
+  background: #a3b18a;
+  box-shadow: 0 0 6px rgba(163, 177, 138, 0.8);
+}
+
+.ingest-dot.tone-warn {
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(251, 146, 60, 0.6);
+}
+
+.ingest-dot.tone-err {
+  background: #ff6b6b;
+  box-shadow: 0 0 6px rgba(255, 107, 107, 0.6);
+}
+
+.ingest-label {
+  color: var(--fg-dim);
+}
+
+.ingest-value {
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
 .pulse {
   display: inline-flex;
   align-items: center;

@@ -231,8 +231,31 @@ def ingest(driver: Driver) -> tuple[int, int, int]:
     return files, mention_edges, refer_edges
 
 
+def record_run(driver: Driver, files: int, mentions: int, refers: int, duration_ms: int, error: str | None = None) -> None:
+    """Writes a singleton IngestRun node so Mission Control can show
+    'last ingest N seconds ago' without SSH'ing to the container."""
+    with driver.session() as s:
+        s.run(
+            """
+            MERGE (r:IngestRun {key: 'latest'})
+            SET r.at = datetime(),
+                r.files = $files,
+                r.mentions = $mentions,
+                r.refers = $refers,
+                r.duration_ms = $duration_ms,
+                r.error = $error
+            """,
+            files=files, mentions=mentions, refers=refers,
+            duration_ms=duration_ms, error=error,
+        )
+
+
 def main() -> None:
+    import time
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    t0 = time.time()
+    err = None
+    files = mentions = refers = 0
     try:
         driver.verify_connectivity()
         files, mentions, refers = ingest(driver)
@@ -240,7 +263,16 @@ def main() -> None:
             f"[ingest] {files} nodes, {mentions} MENTIONS, "
             f"{refers} REFERS_TO from {VAULT_PATH}"
         )
+    except Exception as e:
+        err = str(e)
+        print(f"[ingest-error] {err}", file=sys.stderr)
+        raise
     finally:
+        duration_ms = int((time.time() - t0) * 1000)
+        try:
+            record_run(driver, files, mentions, refers, duration_ms, err)
+        except Exception as log_err:
+            print(f"[ingest-record-failed] {log_err}", file=sys.stderr)
         driver.close()
 
 

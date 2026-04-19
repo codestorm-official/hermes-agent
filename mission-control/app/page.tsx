@@ -2,6 +2,7 @@ import { Suspense } from 'react';
 import { readQuery } from '@/lib/neo4j';
 import Graph from '@/components/Graph';
 import LeftColumn from '@/components/LeftColumn';
+import IngestStatus from '@/components/IngestStatus';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -65,9 +66,12 @@ export default async function Page() {
             <div className="stat-value accent">{render(stats.recent)}</div>
           </div>
         </div>
-        <div className="pulse">
-          <span className="pulse-dot" />
-          live
+        <div className="topbar-right">
+          <IngestStatus />
+          <div className="pulse">
+            <span className="pulse-dot" />
+            live
+          </div>
         </div>
       </header>
       <div className="stage">
