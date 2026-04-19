@@ -226,6 +226,49 @@ Neben dem Vault hast du einen Neo4j Knowledge Graph der den Vault spiegelt. Jede
 
 **Wann Graph statt Vault-grep?** Bei Beziehungsfragen ("wer gehoert zu X", "alle Vorgaenge von Person Y", "wie ist A mit B verbunden"). Bei Faktenfragen zu einer einzelnen Datei: weiter Vault-cat. Der Graph ist ~2 Min hinter dem Vault (Ingester-Loop), also frische Notizen ggf. nochmal cat.
 
+## Wedding-Rechnungen (Skill)
+
+Wenn Ari oder Vika eine **Hochzeit-Rechnung als PDF/Bild** per Telegram schicken (Trigger: "Hochzeit", "Rechnung", "Wedding", "Invoice", "Quittung fuer", Kontext ist erkennbar Hochzeits-bezogen), nutze das `wedding-invoice` Skill. Budget-Ledger ist der Google Sheet - nicht der Vault.
+
+Ablauf (wichtig, **nicht abkuerzen**):
+
+1. **Datei-Pfad ermitteln.** Telegram-Attachments werden von Hermes nach `/data/.hermes/cache/` gecached. Nimm den Pfad aus dem Gateway-Event.
+2. **Text extrahieren:**
+   ```
+   python3 /opt/hermes-skills/wedding-invoice/scripts/extract_invoice.py <pfad>
+   ```
+   Output JSON: `{file, extraction_method, lang_detected, raw_text}`. `extraction_method` = `pdftotext` | `tesseract` | `tesseract_partial` | `pdftotext_empty`.
+3. **Felder selbst parsen.** Aus `raw_text` extrahierst DU: `vendor`, `description`, `category` (aus der Schema-Liste in `sheet_schema.md`), `payment`, `amount_ils` (plain number, keine Kommas/Symbole), `vat_ils`, `include_vat` (YES/NO), `final_ils`, `date` (YYYY-MM-DD), `method`, `notes`, `paid_by`, `status`.
+   - `paid_by` via `source.user_id`: `7652652109` -> `Ari`, `5289484491` -> `Victoria` (Vika - Sheet-Historie nutzt "Victoria").
+   - `status`: `Paid` wenn es wie eine Zahlungsbestaetigung/Quittung aussieht, sonst `Open`.
+4. **Preview auf Deutsch, PFLICHT-Bestaetigung.** Nie still in den Sheet schreiben.
+   ```
+   Rechnung erkannt:
+   - Vendor: ...
+   - Kategorie: ...
+   - Beschreibung: ...
+   - Betrag: ... ILS (Final: ... ILS)
+   - MwSt: ... ILS (YES/NO)
+   - Datum: ...
+   - Paid By: ...
+   - Status: Paid/Open
+   
+   Soll ich das so eintragen?
+   ```
+5. **Auf Bestaetigung:**
+   ```
+   python3 /opt/hermes-skills/wedding-invoice/scripts/add_expense.py \
+     --file <pfad> \
+     --data '<JSON mit den Feldern>' \
+     --filename "YYYY-MM-DD_Vendor_Description.pdf"
+   ```
+   Script macht Drive-Upload (Rechnungen-Ordner) + Smart-Upsert im Payments-Sheet (matcht offene Zeile nach vendor+amount_ils, flippt auf Paid; sonst neue Zeile).
+6. **Bestaetigung zurueck an den Nutzer:** Drive-Link + Sheet-Aktion ("neue Zeile" / "Zeile N von Open -> Paid").
+7. **Nichts im Vault speichern** (das Sheet ist die Quelle der Wahrheit fuer's Budget). Optional nur einen Daily-Bullet "Wedding-Rechnung X ueber Y ILS an Z eingetragen".
+
+Schema und Spalten: siehe `/opt/hermes-skills/wedding-invoice/references/sheet_schema.md`.
+Troubleshooting: wenn Tesseract Hebrew-Muell zurueckgibt, versuche `--lang heb` only. Bei komplett unlesbar: frag den Nutzer nach den Kernfeldern (vendor, Betrag, Datum) und nutze `add_expense.py` direkt mit manuellen Daten.
+
 ## Quellen (Prioritaetsreihenfolge)
 1. `vault/users/<name>.md` - personenspezifische Stammdaten (am Turn-Start laden basierend auf user_id)
 2. `/data/vault` - Obsidian Vault (live, via Terminal-Tools): PRIMAERE Fakten-Quelle fuer Inhalte

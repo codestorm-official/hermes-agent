@@ -1,7 +1,9 @@
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl ca-certificates git gettext-base && \
+    apt-get install -y --no-install-recommends \
+        curl ca-certificates git gettext-base \
+        poppler-utils tesseract-ocr tesseract-ocr-heb tesseract-ocr-deu && \
     rm -rf /var/lib/apt/lists/*
 
 # Install hermes-agent as a package (gives us the `hermes` CLI entry point)
@@ -36,6 +38,14 @@ COPY server.py /app/server.py
 COPY templates/ /app/templates/
 COPY graph-ingester/ /app/graph-ingester/
 COPY graph-mcp/ /app/graph-mcp/
+
+# User-defined skills. Kept under /opt (outside the /data volume) so container
+# updates aren't shadowed by the persistent volume. SOUL.md instructs Hermes
+# to invoke scripts by absolute path (/opt/hermes-skills/...).
+# Directory is named hermes-skills/ in the repo because upstream .gitignore
+# ignores `skills/` (reserved for Hermes's own skill cache).
+COPY hermes-skills/ /opt/hermes-skills/
+
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 

@@ -2,6 +2,7 @@
 set -e
 
 mkdir -p /data/.hermes/sessions /data/.hermes/skills /data/.hermes/workspace /data/.hermes/pairing
+mkdir -p /data/wedding-invoices
 
 # Merge the git-tracked seed config into the persisted config.yaml. The seed
 # wins for everything except model.default and model.provider, which are
