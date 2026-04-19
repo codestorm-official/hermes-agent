@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { readQuery } from '@/lib/neo4j';
 import Graph from '@/components/Graph';
 
@@ -68,7 +69,9 @@ export default async function Page() {
           live
         </div>
       </header>
-      <Graph />
+      <Suspense>
+        <Graph />
+      </Suspense>
     </main>
   );
 }

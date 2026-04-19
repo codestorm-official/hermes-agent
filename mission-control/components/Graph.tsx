@@ -1,29 +1,42 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { colorFor, LABEL_ORDER, LABEL_COLOR } from '@/lib/labels';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { colorFor, LABEL_COLOR, LABEL_ORDER } from '@/lib/labels';
+import DetailPanel from './DetailPanel';
 
-// react-force-graph-2d uses window/canvas, so must be client-side and
-// ssr-disabled. Wrapped once here and reused by the page.
 const ForceGraph2D = dynamic(
   () => import('react-force-graph-2d').then((m) => m.default),
   { ssr: false },
 ) as any;
 
-type Node = { id: number; name: string; label: string; degree: number };
-type Link = { source: number; target: number };
+type Node = {
+  id: number;
+  name: string;
+  label: string;
+  degree: number;
+  x?: number;
+  y?: number;
+};
+type Link = { source: number | Node; target: number | Node };
 type GraphData = { nodes: Node[]; links: Link[] };
 
 export default function Graph() {
+  const router = useRouter();
+  const params = useSearchParams();
+  const selectedId = useMemo(() => {
+    const v = params.get('n');
+    return v ? Number.parseInt(v, 10) : null;
+  }, [params]);
+
   const [data, setData] = useState<GraphData | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [hover, setHover] = useState<Node | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const fgRef = useRef<any>(null);
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
 
-  // Fetch + refresh on a slow cadence. The graph ingests every 120s so
-  // no point polling faster than that.
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
@@ -44,8 +57,6 @@ export default function Graph() {
     };
   }, []);
 
-  // Size the canvas to its container. ForceGraph2D needs explicit w/h
-  // props; it doesn't flex. ResizeObserver handles window resizes.
   useEffect(() => {
     if (!wrapRef.current) return;
     const el = wrapRef.current;
@@ -67,11 +78,31 @@ export default function Graph() {
     }));
   }, [data]);
 
+  const setSelection = useCallback(
+    (id: number | null) => {
+      const q = new URLSearchParams(params.toString());
+      if (id == null) q.delete('n');
+      else q.set('n', String(id));
+      router.replace(q.toString() ? `?${q.toString()}` : '/', { scroll: false });
+    },
+    [params, router],
+  );
+
+  // When selection changes, pan/zoom the graph to that node (if loaded).
+  useEffect(() => {
+    if (!fgRef.current || selectedId == null || !data) return;
+    const target = data.nodes.find((n) => n.id === selectedId);
+    if (!target || target.x == null || target.y == null) return;
+    fgRef.current.centerAt(target.x, target.y, 600);
+    fgRef.current.zoom(2.8, 600);
+  }, [selectedId, data]);
+
   return (
     <div className="graph-wrap" ref={wrapRef}>
       {err && <div className="graph-err">{err}</div>}
       {data && size.w > 0 && (
         <ForceGraph2D
+          ref={fgRef}
           graphData={data}
           width={size.w}
           height={size.h}
@@ -79,25 +110,43 @@ export default function Graph() {
           nodeRelSize={3}
           nodeVal={(n: Node) => 1 + Math.min(n.degree, 20) * 0.5}
           nodeLabel={(n: Node) => `${n.name} · ${n.label}`}
-          nodeColor={(n: Node) => colorFor(n.label)}
-          linkColor={() => 'rgba(180, 180, 180, 0.08)'}
-          linkWidth={0.6}
-          linkDirectionalParticles={0}
+          nodeColor={(n: Node) =>
+            selectedId === n.id ? '#fb923c' : colorFor(n.label)
+          }
+          linkColor={(l: Link) => {
+            const sid = typeof l.source === 'number' ? l.source : l.source.id;
+            const tid = typeof l.target === 'number' ? l.target : l.target.id;
+            if (selectedId != null && (sid === selectedId || tid === selectedId)) {
+              return 'rgba(251, 146, 60, 0.55)';
+            }
+            return 'rgba(180, 180, 180, 0.07)';
+          }}
+          linkWidth={(l: Link) => {
+            const sid = typeof l.source === 'number' ? l.source : l.source.id;
+            const tid = typeof l.target === 'number' ? l.target : l.target.id;
+            return selectedId != null && (sid === selectedId || tid === selectedId)
+              ? 1.4
+              : 0.6;
+          }}
           cooldownTicks={100}
           d3VelocityDecay={0.3}
           onNodeHover={(n: Node | null) => setHover(n)}
+          onNodeClick={(n: Node) => setSelection(n.id)}
+          onBackgroundClick={() => setSelection(null)}
           nodeCanvasObjectMode={() => 'after'}
           nodeCanvasObject={(n: Node, ctx: CanvasRenderingContext2D, scale: number) => {
-            // Only draw labels for high-degree nodes or when zoomed in.
-            const show = n.degree >= 6 || scale > 2.4;
+            const isSelected = selectedId === n.id;
+            const show = isSelected || n.degree >= 6 || scale > 2.4;
             if (!show) return;
             const r = 3 + Math.min(n.degree, 20) * 0.5;
             const fontSize = Math.max(9, 11 / scale);
-            ctx.font = `${fontSize}px "Space Grotesk", ui-sans-serif`;
+            ctx.font = `${isSelected ? 600 : 400} ${fontSize}px "Space Grotesk", ui-sans-serif`;
             ctx.textAlign = 'left';
             ctx.textBaseline = 'middle';
-            ctx.fillStyle = 'rgba(230, 230, 230, 0.72)';
-            ctx.fillText(n.name, (n as any).x + r + 3, (n as any).y);
+            ctx.fillStyle = isSelected
+              ? 'rgba(251, 146, 60, 1)'
+              : 'rgba(230, 230, 230, 0.72)';
+            ctx.fillText(n.name, (n.x ?? 0) + r + 3, n.y ?? 0);
           }}
         />
       )}
@@ -114,7 +163,7 @@ export default function Graph() {
           </div>
         ))}
       </div>
-      {hover && (
+      {hover && selectedId == null && (
         <div className="hover-card">
           <div className="hover-name">{hover.name}</div>
           <div className="hover-meta">
@@ -126,6 +175,11 @@ export default function Graph() {
           </div>
         </div>
       )}
+      <DetailPanel
+        nodeId={selectedId}
+        onClose={() => setSelection(null)}
+        onNavigate={(id) => setSelection(id)}
+      />
     </div>
   );
 }
