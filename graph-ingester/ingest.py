@@ -86,25 +86,38 @@ def extract_wikilinks(content: str) -> list[str]:
 
 
 def upsert_node(tx, name: str, label: str, props: dict) -> None:
-    """Idempotent MERGE on (name, label). Props update on every run."""
+    """Idempotent MERGE on name only, then assign label.
+
+    Matching on name alone (no label in pattern) is critical: otherwise a
+    previously-created Stub node (from a wikilink referencing this entity
+    before its own file was walked) would NOT match `MERGE (n:Label {name})`,
+    and we'd end up with two distinct nodes for the same entity. Two-phase
+    approach instead: match-by-name, then promote via SET label + REMOVE Stub.
+    """
     clean = {k: v for k, v in props.items() if v is not None and not isinstance(v, (dict, list))}
     tx.run(
-        f"MERGE (n:{label} {{name: $name}}) SET n += $props",
+        f"""
+        MERGE (n {{name: $name}})
+        SET n:{label}
+        REMOVE n:Stub
+        SET n += $props
+        """,
         name=name, props=clean,
     )
 
 
-def upsert_edge(tx, src_name: str, src_label: str, tgt_name: str) -> None:
-    """Edge from a source node (known label) to a target node (label=Stub if not seen yet).
+def upsert_edge(tx, src_name: str, tgt_name: str) -> None:
+    """Edge from an already-created source to a target node.
 
-    Wikilink targets without a dedicated file get label Stub so the graph
-    still reflects them; a later ingest run re-labels them properly once
-    the file is created.
+    Source is guaranteed to exist because ingest() calls upsert_node first
+    for every file. Target is matched by name only; if no node with that
+    name exists yet, create a Stub. A later ingest run (or later file walk)
+    will promote the Stub to a proper label via upsert_node's SET/REMOVE.
     """
     tx.run(
-        f"""
-        MERGE (src:{src_label} {{name: $src_name}})
-        MERGE (tgt {{name: $tgt_name}})
+        """
+        MATCH (src {name: $src_name})
+        MERGE (tgt {name: $tgt_name})
         ON CREATE SET tgt:Stub
         MERGE (src)-[:MENTIONS]->(tgt)
         """,
@@ -113,27 +126,37 @@ def upsert_edge(tx, src_name: str, src_label: str, tgt_name: str) -> None:
 
 
 def ingest(driver: Driver) -> tuple[int, int]:
+    """Two-pass walk: all nodes first (so labels land before any wikilink
+    would auto-create a Stub by that name), then edges. Materialises the
+    file list once so pass 2 doesn't re-read."""
     files = 0
     edges = 0
+    # Pass 1: materialise file list + upsert labeled nodes.
+    parsed: list[tuple[str, str, str, dict]] = []  # (name, label, content, props)
+    for path in walk_vault():
+        try:
+            post = frontmatter.loads(path.read_text(encoding="utf-8", errors="replace"))
+        except Exception as e:
+            print(f"[skip] {path}: {e}", file=sys.stderr)
+            continue
+        name = node_name(path)
+        folder = folder_of(path)
+        label = label_for(folder)
+        props = {
+            "path": str(path.relative_to(VAULT_PATH)),
+            "folder": folder,
+            **{k: v for k, v in post.metadata.items() if v is not None},
+        }
+        parsed.append((name, label, post.content, props))
+
     with driver.session() as session:
-        for path in walk_vault():
-            try:
-                post = frontmatter.loads(path.read_text(encoding="utf-8", errors="replace"))
-            except Exception as e:
-                print(f"[skip] {path}: {e}", file=sys.stderr)
-                continue
-            name = node_name(path)
-            folder = folder_of(path)
-            label = label_for(folder)
-            props = {
-                "path": str(path.relative_to(VAULT_PATH)),
-                "folder": folder,
-                **{k: v for k, v in post.metadata.items() if v is not None},
-            }
+        for name, label, _content, props in parsed:
             session.execute_write(upsert_node, name, label, props)
             files += 1
-            for target in extract_wikilinks(post.content):
-                session.execute_write(upsert_edge, name, label, target)
+        # Pass 2: edges. Source node is guaranteed to exist now.
+        for name, _label, content, _props in parsed:
+            for target in extract_wikilinks(content):
+                session.execute_write(upsert_edge, name, target)
                 edges += 1
     return files, edges
 
