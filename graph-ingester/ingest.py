@@ -131,9 +131,25 @@ def upsert_edge(tx, src_name: str, tgt_name: str) -> None:
 SCALAR_YAML_KEYS = {
     'status', 'priority', 'deadline', 'date', 'type', 'id', 'mfiles_id',
     'email', 'url', 'phone', 'path', 'folder', 'tags', 'aliases',
-    'created', 'modified', 'version', 'draft', 'cssclass', 'title',
-    'description', 'summary', 'icon', 'color',
+    'created', 'modified', 'updated', 'version', 'draft', 'cssclass',
+    'title', 'description', 'summary', 'icon', 'color', 'location',
+    'standort', 'adresse',
 }
+
+
+def _unwrap_wikilink(v: str) -> str:
+    """Hermes writes many YAML refs as proper wikilinks
+    (eigentuemer: '[[XYZ GbR]]') so Obsidian still tracks them in the
+    native graph view. Strip the brackets + alias before matching."""
+    s = v.strip()
+    if s.startswith('[[') and s.endswith(']]'):
+        s = s[2:-2]
+    # handle [[name|alias]] -> name
+    if '|' in s:
+        s = s.split('|', 1)[0]
+    # handle [[name#heading]] -> name
+    s = s.split('#', 1)[0].split('^', 1)[0]
+    return s.strip()
 
 
 def yaml_edges(tx, src_name: str, props: dict) -> int:
@@ -153,7 +169,7 @@ def yaml_edges(tx, src_name: str, props: dict) -> int:
         for v in values:
             if not isinstance(v, str):
                 continue
-            tgt = v.strip()
+            tgt = _unwrap_wikilink(v)
             if not tgt or tgt == src_name:
                 continue
             res = tx.run(
