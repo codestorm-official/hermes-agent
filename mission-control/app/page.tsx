@@ -4,6 +4,7 @@ import Graph from '@/components/Graph';
 import LeftColumn from '@/components/LeftColumn';
 import IngestStatus from '@/components/IngestStatus';
 import CommandPalette from '@/components/CommandPalette';
+import AskLauncher from '@/components/AskLauncher';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -86,6 +87,7 @@ export default async function Page() {
       <Suspense>
         <CommandPalette />
       </Suspense>
+      <AskLauncher />
     </main>
   );
 }
