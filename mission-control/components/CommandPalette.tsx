@@ -93,17 +93,6 @@ export default function CommandPalette() {
             <Command.Group heading="Actions" className="cmdk-group">
               <Command.Item
                 className="cmdk-item"
-                onSelect={() => {
-                  setOpen(false);
-                  window.dispatchEvent(new Event('hermes:ask-open'));
-                }}
-                value="ask a question"
-              >
-                <span className="cmdk-kicker">ask</span>
-                <span>natural-language query</span>
-              </Command.Item>
-              <Command.Item
-                className="cmdk-item"
                 onSelect={toggleMode}
                 value={`switch to ${is3D ? '2d' : '3d'}`}
               >
