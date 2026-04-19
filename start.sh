@@ -24,11 +24,13 @@ done
 # Obsidian vault mount (2-way). When OBSIDIAN_VAULT_REPO_URL +
 # OBSIDIAN_VAULT_GITHUB_TOKEN are set, clone the vault to /data/vault on
 # first boot and keep it in sync with GitHub via a background loop:
-#   - pull --rebase --autostash keeps local uncommitted Hermes work safe
-#     when Ari's Obsidian Git plugin pushes new content.
-#   - push origin HEAD makes sure any commits Hermes made (see SOUL.md
-#     "Schreib-Disziplin") reach GitHub without requiring the agent to
-#     remember the push step.
+#   - auto-commit any uncommitted local changes (safety net if the agent
+#     forgot the commit ritual from SOUL.md). These fallback commits have
+#     timestamp names, not semantic ones; agent-crafted commits remain the
+#     primary path.
+#   - pull --rebase --autostash keeps local work safe when Ari's Obsidian
+#     Git plugin pushes new content.
+#   - push origin HEAD ensures Hermes' commits land on GitHub.
 # OBSIDIAN_VAULT_PATH is exported so the bundled note-taking/obsidian
 # Hermes skill finds the vault.
 if [ -n "${OBSIDIAN_VAULT_REPO_URL:-}" ] && [ -n "${OBSIDIAN_VAULT_GITHUB_TOKEN:-}" ]; then
@@ -48,12 +50,16 @@ if [ -n "${OBSIDIAN_VAULT_REPO_URL:-}" ] && [ -n "${OBSIDIAN_VAULT_GITHUB_TOKEN:
         git -C /data/vault config user.name  "Hermes PA"
         git -C /data/vault config user.email "hermes@ari-birnbaum"
 
-        # Background sync loop - 15-minute interval. Pull first, push second.
-        # Errors swallowed so a transient network blip or rebase conflict
-        # never crashes the gateway.
+        # Background sync loop - 15-minute interval. Errors swallowed so
+        # a transient network blip or rebase conflict never crashes the
+        # gateway.
         (
             while true; do
                 sleep 900
+                if [ -n "$(git -C /data/vault status --porcelain 2>/dev/null)" ]; then
+                    git -C /data/vault add -A 2>/dev/null || true
+                    git -C /data/vault commit -m "Hermes: auto-commit pending changes $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true
+                fi
                 git -C /data/vault pull --rebase --autostash >/dev/null 2>&1 \
                     || git -C /data/vault rebase --abort >/dev/null 2>&1 || true
                 git -C /data/vault push origin HEAD >/dev/null 2>&1 || true
