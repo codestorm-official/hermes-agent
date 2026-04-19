@@ -50,12 +50,17 @@ if [ -n "${OBSIDIAN_VAULT_REPO_URL:-}" ] && [ -n "${OBSIDIAN_VAULT_GITHUB_TOKEN:
         git -C /data/vault config user.name  "Hermes PA"
         git -C /data/vault config user.email "hermes@ari-birnbaum"
 
-        # Background sync loop - 15-minute interval. Errors swallowed so
-        # a transient network blip or rebase conflict never crashes the
-        # gateway.
+        # Background sync loop - 60-second interval. Short interval is
+        # chosen because the agent's SOUL Exit-Bedingung (commit before
+        # answering Ari) is not reliably honoured by the model; the loop
+        # is effectively the real commit mechanism. 60s keeps the
+        # observable data-loss window tiny while still leaving semantic
+        # room for agent-crafted commits in the cases where it does
+        # commit. Errors swallowed so a transient network blip or rebase
+        # conflict never crashes the gateway.
         (
             while true; do
-                sleep 900
+                sleep 60
                 if [ -n "$(git -C /data/vault status --porcelain 2>/dev/null)" ]; then
                     git -C /data/vault add -A 2>/dev/null || true
                     git -C /data/vault commit -m "Hermes: auto-commit pending changes $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null 2>&1 || true

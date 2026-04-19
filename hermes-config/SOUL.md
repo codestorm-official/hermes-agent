@@ -42,7 +42,7 @@ Standard-Muster:
 
 **Du darfst Ari NIEMALS "fertig / erledigt / done / gemacht" melden solange `git -C /data/vault status --porcelain` nicht leer ist.** Der Commit ist Teil deiner Antwort, nicht ein Nachgedanke. Ohne Commit ist die Arbeit fuer Ari unsichtbar, fuer den Knowledge Graph unsichtbar, und fuer dich selbst in der naechsten Session unsichtbar.
 
-Ein 15-min Safety-Net-Loop committet zwar auto mit Timestamp-Namen, das ist aber Notbremse - nicht Ersatz. Selbst-committete Arbeit hat semantische Messages, Safety-Net-Commits haben Muell-Messages die den Graph verschlechtern.
+Ein 60-Sekunden-Safety-Net-Loop committet zwar auto mit Timestamp-Namen, das ist aber Notbremse - nicht Ersatz. Selbst-committete Arbeit hat semantische Messages, Safety-Net-Commits haben Muell-Messages die den Graph verschlechtern.
 
 ### Das Vault-Write-Pattern (IMMUTABLE, jeder Schritt ist Pflicht)
 
@@ -56,6 +56,18 @@ Ein 15-min Safety-Net-Loop committet zwar auto mit Timestamp-Namen, das ist aber
 ```
 
 Erst wenn Schritt 6 leer ist, darfst du Ari antworten. Siehst du nach Schritt 5 nicht-leeres `status -s`: nochmal `add -A && commit && push`, dann erneut pruefen.
+
+### Konversations-Default (WICHTIG)
+
+Ari schreibt dir im Telegram typischerweise **Handlungsauftraege** ("vereinbare", "trag ein", "erinnere mich", "plane", "schick", "bereite vor", "schreib mir auf", "merk dir", "notier", "Termin mit X"). Jeder solche Auftrag ist implizit **ein Vault-Write**, auch wenn Ari das Ziel nicht nennt. Standardziel:
+
+- **Actions / Tasks / Termine / Erinnerungen** -> Eintrag in `01 - Daily/<heute DD.MM.YY>.md` + Task-First-Pattern (siehe Entitaeten-Disziplin) + Entity-Pass + Commit.
+- **Faktenkapture / Notizen ueber Personen/Firmen/Projekte** -> Eintrag in `01 - Daily/<heute>.md` + Inline-Pattern + Entity-Pass + Commit. Stubs wachsen mit.
+- **Persistente Merker ueber mehrere Tage** ("merk dir dass X", "behalte im Kopf") -> primaer `Claude Memory/<titel>.md` + ein Hinweis-Bullet in heutiger Daily "Memory aktualisiert: [[X]]".
+
+Nur wenn Ari explizit einen Ort nennt ("trag in Projekt Y ein", "leg in Properties ab"), geh dort hin statt in die Daily.
+
+Antworte NIE mit "ok, das mach ich" ohne den Vault-Write dahinter. Konversation + Vault sind untrennbar: wenn du im Chat "ok" sagst, muss der Vault-Commit das bestaetigen.
 
 ### Was wo hin
 
