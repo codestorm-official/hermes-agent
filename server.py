@@ -12,9 +12,11 @@ import os
 import re
 import secrets
 import signal
+import subprocess
 import time
 from collections import deque
 from contextlib import asynccontextmanager
+from datetime import date
 from pathlib import Path
 
 from starlette.applications import Starlette
@@ -493,6 +495,180 @@ async def api_pairing_revoke(request: Request):
     return JSONResponse({"ok": True})
 
 
+# ── Skills registry (read-only) ───────────────────────────────────────────────
+SKILLS_DIR = Path("/opt/hermes-skills")
+VAULT_DIR = Path(os.environ.get("OBSIDIAN_VAULT_PATH", "/data/vault"))
+
+
+def _parse_frontmatter(text: str) -> tuple[dict, str]:
+    """Minimal YAML frontmatter parser. Returns (metadata, body)."""
+    if not text.startswith("---\n"):
+        return {}, text
+    end = text.find("\n---\n", 4)
+    if end < 0:
+        return {}, text
+    raw = text[4:end]
+    body = text[end + 5:]
+    meta: dict = {}
+    for line in raw.splitlines():
+        line = line.rstrip()
+        if not line or line.startswith("#"):
+            continue
+        if ":" not in line:
+            continue
+        key, _, val = line.partition(":")
+        val = val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
+            val = val[1:-1]
+        meta[key.strip()] = val
+    return meta, body
+
+
+async def api_skills_list(request: Request):
+    if err := guard(request): return err
+    out = []
+    if SKILLS_DIR.exists():
+        for skill_dir in sorted(SKILLS_DIR.iterdir()):
+            if not skill_dir.is_dir():
+                continue
+            skill_md = skill_dir / "SKILL.md"
+            if not skill_md.exists():
+                continue
+            try:
+                text = skill_md.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            meta, _ = _parse_frontmatter(text)
+            scripts = []
+            scripts_dir = skill_dir / "scripts"
+            if scripts_dir.exists():
+                scripts = sorted(p.name for p in scripts_dir.iterdir() if p.is_file())
+            out.append({
+                "name": meta.get("name", skill_dir.name),
+                "description": meta.get("description", ""),
+                "path": str(skill_dir),
+                "scripts": scripts,
+            })
+    return JSONResponse({"skills": out})
+
+
+# ── Vault task status write-back ──────────────────────────────────────────────
+VALID_TASK_STATUSES = {"todo", "in_progress", "doing", "done", "cancelled"}
+
+
+def _vault_safe_path(relative: str) -> Path | None:
+    """Resolve `relative` under VAULT_DIR. Rejects traversal, absolute paths,
+    and anything outside Tasks/. Returns None on any safety violation."""
+    if not relative:
+        return None
+    p = Path(relative.replace("\\", "/"))
+    if p.is_absolute():
+        return None
+    if ".." in p.parts:
+        return None
+    if p.parts[:1] != ("Tasks",):
+        return None
+    if p.suffix.lower() != ".md":
+        return None
+    full = (VAULT_DIR / p).resolve()
+    try:
+        full.relative_to(VAULT_DIR.resolve())
+    except ValueError:
+        return None
+    if not full.exists():
+        return None
+    return full
+
+
+def _patch_task_status(full_path: Path, new_status: str) -> tuple[str, str]:
+    """Rewrite the task's YAML frontmatter with status=<new_status>. Also
+    sets completed_date when status is 'done'. Returns (old_status, filename)."""
+    text = full_path.read_text(encoding="utf-8")
+    if not text.startswith("---\n"):
+        raise ValueError("Task file has no YAML frontmatter")
+    end = text.find("\n---\n", 4)
+    if end < 0:
+        raise ValueError("Unterminated YAML frontmatter")
+    fm = text[4:end]
+    body = text[end + 5:]
+
+    old_status = "unknown"
+    lines = fm.splitlines()
+    status_line_idx = None
+    completed_line_idx = None
+    for i, line in enumerate(lines):
+        if line.startswith("status:"):
+            status_line_idx = i
+            old_status = line.partition(":")[2].strip().strip('"').strip("'")
+        elif line.startswith("completed_date:"):
+            completed_line_idx = i
+
+    today = date.today().isoformat()
+    if status_line_idx is None:
+        lines.append(f"status: {new_status}")
+    else:
+        lines[status_line_idx] = f"status: {new_status}"
+
+    if new_status == "done":
+        cd_line = f"completed_date: {today}"
+        if completed_line_idx is None:
+            lines.append(cd_line)
+        else:
+            lines[completed_line_idx] = cd_line
+
+    new_text = "---\n" + "\n".join(lines) + "\n---\n" + body
+    full_path.write_text(new_text, encoding="utf-8")
+    return old_status, full_path.name
+
+
+def _git_commit_vault(path: Path, message: str) -> tuple[bool, str]:
+    """Stage + commit + push a single changed path in the vault. Best effort."""
+    try:
+        env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+        subprocess.run(["git", "-C", str(VAULT_DIR), "add", str(path)], check=True, env=env, timeout=30)
+        r = subprocess.run(
+            ["git", "-C", str(VAULT_DIR), "commit", "-m", message],
+            capture_output=True, text=True, env=env, timeout=30,
+        )
+        if r.returncode != 0 and "nothing to commit" not in (r.stdout + r.stderr):
+            return False, f"commit failed: {(r.stdout + r.stderr).strip()[:200]}"
+        subprocess.run(["git", "-C", str(VAULT_DIR), "push", "origin", "HEAD"],
+                       check=False, env=env, timeout=60)
+        return True, "ok"
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        return False, f"git error: {e}"
+
+
+async def api_vault_task_status(request: Request):
+    """POST {path: "Tasks/XYZ.md", status: "done"} → patches YAML + commits vault."""
+    if err := guard(request): return err
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    relative = (body.get("path") or "").strip()
+    new_status = (body.get("status") or "").strip().lower().replace(" ", "_")
+    if new_status not in VALID_TASK_STATUSES:
+        return JSONResponse({"error": f"status must be one of {sorted(VALID_TASK_STATUSES)}"}, status_code=400)
+
+    full = _vault_safe_path(relative)
+    if full is None:
+        return JSONResponse({"error": "invalid or unknown path"}, status_code=400)
+
+    try:
+        old_status, fname = _patch_task_status(full, new_status)
+    except Exception as e:
+        return JSONResponse({"error": f"patch failed: {e}"}, status_code=500)
+
+    msg = f"Hermes: Task '{fname[:-3]}' status {old_status} -> {new_status}"
+    ok, info = _git_commit_vault(full, msg)
+    return JSONResponse({
+        "ok": ok, "path": relative, "old_status": old_status,
+        "new_status": new_status, "git": info,
+    })
+
+
 # ── App lifecycle ─────────────────────────────────────────────────────────────
 async def auto_start():
     data = read_env(ENV_FILE)
@@ -525,6 +701,8 @@ routes = [
     Route("/api/pairing/deny",          api_pairing_deny,    methods=["POST"]),
     Route("/api/pairing/approved",      api_pairing_approved),
     Route("/api/pairing/revoke",        api_pairing_revoke,  methods=["POST"]),
+    Route("/api/skills",                api_skills_list),
+    Route("/api/vault/task/status",     api_vault_task_status, methods=["POST"]),
 ]
 
 app = Starlette(

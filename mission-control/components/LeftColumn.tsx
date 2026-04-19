@@ -3,8 +3,9 @@
 import { useState } from 'react';
 import ActivityFeed from './ActivityFeed';
 import TaskBoard from './TaskBoard';
+import SkillsPanel from './SkillsPanel';
 
-type Tab = 'tasks' | 'activity';
+type Tab = 'tasks' | 'activity' | 'skills';
 
 export default function LeftColumn() {
   const [tab, setTab] = useState<Tab>('tasks');
@@ -23,9 +24,17 @@ export default function LeftColumn() {
         >
           Activity
         </button>
+        <button
+          className={`left-tab${tab === 'skills' ? ' active' : ''}`}
+          onClick={() => setTab('skills')}
+        >
+          Skills
+        </button>
       </div>
       <div className="left-body">
-        {tab === 'tasks' ? <TaskBoard /> : <ActivityFeed inline />}
+        {tab === 'tasks' && <TaskBoard />}
+        {tab === 'activity' && <ActivityFeed inline />}
+        {tab === 'skills' && <SkillsPanel />}
       </div>
     </aside>
   );

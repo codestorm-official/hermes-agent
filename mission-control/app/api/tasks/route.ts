@@ -11,6 +11,7 @@ export const revalidate = 0;
 type TaskRow = {
   id: { low: number; high: number } | number;
   name: string;
+  path: string | null;
   status: string | null;
   priority: string | null;
   deadline: unknown;
@@ -19,6 +20,16 @@ type TaskRow = {
   type: string | null;
   degree: { low: number; high: number } | number;
 };
+
+// Normalize mixed casings / spaces in status+priority so UI sort is stable.
+// The vault currently has "Todo", "todo", "In Progress", "in_progress" etc.
+function normStatus(v: string | null): string {
+  const s = (v ?? 'todo').trim().toLowerCase().replace(/\s+/g, '_');
+  return s || 'todo';
+}
+function normPriority(v: string | null): string {
+  return (v ?? 'normal').trim().toLowerCase() || 'normal';
+}
 
 const toInt = (v: TaskRow['id']) =>
   typeof v === 'number' ? v : v.low + v.high * 2 ** 32;
@@ -51,7 +62,7 @@ export async function GET() {
       `MATCH (t:Task)
        OPTIONAL MATCH (t)-[r]-()
        WITH t, count(r) AS degree
-       RETURN id(t) AS id, t.name AS name,
+       RETURN id(t) AS id, t.name AS name, t.path AS path,
               t.status AS status, t.priority AS priority,
               t.deadline AS deadline, t.assignee AS assignee,
               t.area AS area, t.type AS type, degree
@@ -60,8 +71,9 @@ export async function GET() {
     const tasks = rows.map((r) => ({
       id: toInt(r.id),
       name: r.name ?? '(unnamed)',
-      status: r.status ?? 'todo',
-      priority: r.priority ?? 'normal',
+      path: r.path ?? null,
+      status: normStatus(r.status),
+      priority: normPriority(r.priority),
       deadline: normalizeDate(r.deadline),
       assignee: r.assignee ?? null,
       area: r.area ?? null,

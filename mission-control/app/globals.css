@@ -705,17 +705,57 @@ main {
 }
 
 .task-card {
-  text-align: left;
   background: rgba(20, 20, 20, 0.6);
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 10px 12px;
-  cursor: pointer;
   transition: border-color 140ms, background 140ms;
   font-family: inherit;
   color: inherit;
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.task-card-body {
+  flex: 1;
+  min-width: 0;
   display: grid;
   gap: 6px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+  color: inherit;
+}
+
+.task-done-btn {
+  flex-shrink: 0;
+  align-self: center;
+  width: 28px;
+  padding: 6px 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: rgba(40, 40, 40, 0.6);
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1;
+  transition: background 140ms, border-color 140ms, color 140ms;
+}
+
+.task-done-btn:hover {
+  background: rgba(163, 177, 138, 0.18);
+  border-color: #a3b18a;
+  color: #a3b18a;
+}
+
+.task-done-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .task-card:hover {
@@ -989,4 +1029,73 @@ main {
   height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
+}
+
+/* ---- Skills panel (Left column tab) ---- */
+.skills-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 2px 2px 12px;
+}
+
+.skill-card {
+  background: rgba(20, 20, 20, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 11px 13px 12px;
+  display: grid;
+  gap: 8px;
+  transition: border-color 140ms, background 140ms;
+}
+
+.skill-card:hover {
+  border-color: var(--border-hi);
+  background: rgba(28, 28, 28, 0.8);
+}
+
+.skill-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.skill-name {
+  font-family: var(--display);
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--fg);
+  letter-spacing: -0.01em;
+}
+
+.skill-scripts {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+
+.skill-desc {
+  font-family: var(--display);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-dim);
+}
+
+.skill-scripts-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.skill-script-chip {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--fg-dim);
+  background: rgba(12, 12, 12, 0.5);
 }

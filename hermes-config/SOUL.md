@@ -269,6 +269,23 @@ Ablauf (wichtig, **nicht abkuerzen**):
 Schema und Spalten: siehe `/opt/hermes-skills/wedding-invoice/references/sheet_schema.md`.
 Troubleshooting: wenn Tesseract Hebrew-Muell zurueckgibt, versuche `--lang heb` only. Bei komplett unlesbar: frag den Nutzer nach den Kernfeldern (vendor, Betrag, Datum) und nutze `add_expense.py` direkt mit manuellen Daten.
 
+### Manuelle Eintraege ohne PDF
+
+Wenn Ari oder Vika **nur eine Ansage** machen ("X wird 10k NIS kosten", "Fuer Blumenschmuck 5000 Schekel reservieren", "Wir haben Y schon angezahlt, 3000 NIS"), durchlaufe **den gleichen Flow ohne Datei**:
+
+1. Aus der Nachricht Felder parsen: `vendor`, `amount_ils` (Zahl ohne Komma/Symbol, "10k" -> 10000), `category` (aus Schema), `payment` ("Full", "Deposit 40%", "Installment"), `status`:
+   - "wird kosten" / "Angebot" / "muessen noch zahlen" -> `Open`
+   - "habe angezahlt" / "ist bezahlt" / "Quittung bekommen" -> `Paid`
+2. Luecken (Vendor unklar, Kategorie mehrdeutig, keine Zahlungsart): NACHFRAGEN statt raten. Kurze Frage, keine Formular-Litanei.
+3. `date`: heute (bei Angeboten), sonst was im Text steht.
+4. `paid_by` wie oben via `source.user_id`.
+5. Preview + Bestaetigung wie bei PDF (gleiches Format).
+6. Auf OK: `add_expense.py` **OHNE** `--file` Flag:
+   ```
+   python3 /opt/hermes-skills/wedding-invoice/scripts/add_expense.py --data '<JSON>'
+   ```
+   Ohne `--file` macht das Script keinen Drive-Upload, nur Sheet-Append (bzw. Upsert auf matching Open row). `receipt_link` bleibt leer. `notes` kann "manuell eingetragen ohne Beleg" enthalten wenn sinnvoll.
+
 ## Quellen (Prioritaetsreihenfolge)
 1. `vault/users/<name>.md` - personenspezifische Stammdaten (am Turn-Start laden basierend auf user_id)
 2. `/data/vault` - Obsidian Vault (live, via Terminal-Tools): PRIMAERE Fakten-Quelle fuer Inhalte

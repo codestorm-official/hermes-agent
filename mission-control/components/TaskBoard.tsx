@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 type Task = {
   id: number;
   name: string;
+  path: string | null;
   status: string;
   priority: string;
   deadline: string | null;
@@ -39,7 +40,7 @@ function parseDeadline(iso: string | null) {
 function sortKey(t: Task): [number, number, number] {
   const statusRank =
     t.status === 'done' ? 3 :
-    t.status === 'doing' ? 2 : 1;
+    t.status === 'doing' || t.status === 'in_progress' ? 2 : 1;
   const d = parseDeadline(t.deadline);
   const priorityRank =
     t.priority === 'high' ? 0 :
@@ -50,30 +51,37 @@ function sortKey(t: Task): [number, number, number] {
 
 function statusColor(status: string, priority: string): string {
   if (status === 'done') return '#3a3a3a';
-  if (status === 'doing') return '#f4d35e';
+  if (status === 'doing' || status === 'in_progress') return '#f4d35e';
   if (priority === 'high') return '#fb923c';
   return '#a3b18a';
 }
 
 export default function TaskBoard() {
   const [data, setData] = useState<Feed | null>(null);
+  const [busyId, setBusyId] = useState<number | null>(null);
   const router = useRouter();
   const params = useSearchParams();
   const selectedId = Number.parseInt(params.get('n') ?? '', 10);
 
+  const load = async () => {
+    try {
+      const r = await fetch('/api/tasks', { cache: 'no-store' });
+      const j = (await r.json()) as Feed;
+      setData(j);
+    } catch {
+      /* keep previous */
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
-    const load = async () => {
-      try {
-        const r = await fetch('/api/tasks', { cache: 'no-store' });
-        const j = (await r.json()) as Feed;
-        if (!cancelled) setData(j);
-      } catch {
-        /* keep previous */
-      }
+    const run = async () => {
+      const r = await fetch('/api/tasks', { cache: 'no-store' });
+      const j = (await r.json()) as Feed;
+      if (!cancelled) setData(j);
     };
-    load();
-    const t = setInterval(load, 120_000);
+    run().catch(() => {});
+    const t = setInterval(run, 120_000);
     return () => {
       cancelled = true;
       clearInterval(t);
@@ -99,35 +107,79 @@ export default function TaskBoard() {
     router.replace(`?${q.toString()}`, { scroll: false });
   };
 
+  const markDone = async (t: Task) => {
+    if (!t.path) {
+      alert('Task has no file path — ingester may not have seen it yet');
+      return;
+    }
+    setBusyId(t.id);
+    try {
+      const r = await fetch('/api/tasks/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: t.path, status: 'done' }),
+      });
+      const j = await r.json();
+      if (!r.ok || j.ok === false) {
+        alert(`mark done failed: ${j.error ?? 'unknown'}`);
+      } else {
+        // Optimistic update; graph ingester will re-confirm within 2 min.
+        setData((prev) => prev && {
+          ...prev,
+          tasks: prev.tasks.map((x) => x.id === t.id ? { ...x, status: 'done' } : x),
+        });
+      }
+    } catch (e) {
+      alert(`mark done error: ${(e as Error).message}`);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const renderTask = (t: Task) => {
     const dl = parseDeadline(t.deadline);
     const active = t.id === selectedId;
+    const isDone = t.status === 'done';
+    const busy = busyId === t.id;
     return (
-      <button
-        key={t.id}
-        className={`task-card${active ? ' active' : ''}${t.status === 'done' ? ' done' : ''}`}
-        onClick={() => select(t.id)}
-      >
-        <div className="task-top">
-          <span
-            className="task-pill"
-            style={{ background: statusColor(t.status, t.priority) }}
-            title={`${t.status} · ${t.priority}`}
-          />
-          {dl && (
+      <div key={t.id} className={`task-card${active ? ' active' : ''}${isDone ? ' done' : ''}`}>
+        <button
+          className="task-card-body"
+          onClick={() => select(t.id)}
+          type="button"
+        >
+          <div className="task-top">
             <span
-              className={`task-deadline${dl.overdue ? ' over' : dl.today ? ' today' : ''}`}
-            >
-              {dl.label}
-            </span>
-          )}
-          {!dl && t.priority === 'high' && (
-            <span className="task-deadline prio">hi</span>
-          )}
-          <span className="task-area">{t.area ?? t.status}</span>
-        </div>
-        <div className="task-name">{t.name}</div>
-      </button>
+              className="task-pill"
+              style={{ background: statusColor(t.status, t.priority) }}
+              title={`${t.status} · ${t.priority}`}
+            />
+            {dl && (
+              <span
+                className={`task-deadline${dl.overdue ? ' over' : dl.today ? ' today' : ''}`}
+              >
+                {dl.label}
+              </span>
+            )}
+            {!dl && t.priority === 'high' && (
+              <span className="task-deadline prio">hi</span>
+            )}
+            <span className="task-area">{t.area ?? t.status}</span>
+          </div>
+          <div className="task-name">{t.name}</div>
+        </button>
+        {!isDone && t.path && (
+          <button
+            className="task-done-btn"
+            title="Mark as done (writes status: done to vault and commits)"
+            onClick={(e) => { e.stopPropagation(); markDone(t); }}
+            disabled={busy}
+            type="button"
+          >
+            {busy ? '…' : '\u2713'}
+          </button>
+        )}
+      </div>
     );
   };
 
