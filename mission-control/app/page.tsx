@@ -3,6 +3,7 @@ import { readQuery } from '@/lib/neo4j';
 import Graph from '@/components/Graph';
 import LeftColumn from '@/components/LeftColumn';
 import IngestStatus from '@/components/IngestStatus';
+import CommandPalette from '@/components/CommandPalette';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -82,6 +83,9 @@ export default async function Page() {
           <Graph />
         </Suspense>
       </div>
+      <Suspense>
+        <CommandPalette />
+      </Suspense>
     </main>
   );
 }
