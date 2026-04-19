@@ -4,6 +4,7 @@ import dynamic from 'next/dynamic';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { colorFor, LABEL_COLOR, LABEL_ORDER } from '@/lib/labels';
+import { communityColor, computeCommunities, COMMUNITY_COLORS } from '@/lib/clustering';
 import DetailPanel from './DetailPanel';
 
 const ForceGraph2D = dynamic(
@@ -59,6 +60,7 @@ export default function Graph() {
     return v ? Number.parseInt(v, 10) : null;
   }, [params]);
   const is3D = params.get('mode') === '3d';
+  const colorMode = params.get('color') === 'community' ? 'community' : 'label';
 
   const [data, setData] = useState<GraphData | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -109,6 +111,24 @@ export default function Graph() {
     }));
   }, [data]);
 
+  // Louvain communities keyed by node id. Recomputed only when the
+  // graph topology changes.
+  const communities = useMemo(() => {
+    if (!data) return null;
+    return computeCommunities(data.nodes, data.links);
+  }, [data]);
+
+  // Community sizes in rank order for the legend.
+  const communityStats = useMemo(() => {
+    if (!communities) return [] as { idx: number; n: number }[];
+    const sizes = new Map<number, number>();
+    for (const c of communities.values()) sizes.set(c, (sizes.get(c) ?? 0) + 1);
+    return [...sizes.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .slice(0, COMMUNITY_COLORS.length)
+      .map(([idx, n]) => ({ idx, n }));
+  }, [communities]);
+
   const edgeCounts = useMemo(() => {
     if (!data) return { mentions: 0, refers: 0 };
     let m = 0;
@@ -148,6 +168,13 @@ export default function Graph() {
     const q = new URLSearchParams(params.toString());
     if (is3D) q.delete('mode');
     else q.set('mode', '3d');
+    router.replace(q.toString() ? `?${q.toString()}` : '/', { scroll: false });
+  };
+
+  const toggleColorMode = () => {
+    const q = new URLSearchParams(params.toString());
+    if (colorMode === 'community') q.delete('color');
+    else q.set('color', 'community');
     router.replace(q.toString() ? `?${q.toString()}` : '/', { scroll: false });
   };
 
@@ -288,12 +315,14 @@ export default function Graph() {
 
   const nodeColor = (n: Node) => {
     if (selectedId === n.id) return '#fb923c';
+    const base =
+      colorMode === 'community'
+        ? communityColor(communities?.get(n.id))
+        : colorFor(n.label);
     if (neighbourSet && !neighbourSet.has(n.id)) {
-      // 2D canvas context reads rgba from nodeColor; dim to 0.15 alpha.
-      const base = colorFor(n.label);
-      return base.length === 7 ? base + '26' : base; // 26 hex = 0.15 alpha
+      return base.length === 7 ? base + '26' : base; // 0.15 alpha
     }
-    return colorFor(n.label);
+    return base;
   };
 
   return (
@@ -350,7 +379,12 @@ export default function Graph() {
           nodeRelSize={4}
           nodeVal={(n: Node) => 1 + Math.min(n.degree, 20) * 0.6}
           nodeLabel={(n: Node) => `${n.name} · ${n.label}`}
-          nodeColor={(n: Node) => (selectedId === n.id ? '#fb923c' : colorFor(n.label))}
+          nodeColor={(n: Node) => {
+            if (selectedId === n.id) return '#fb923c';
+            return colorMode === 'community'
+              ? communityColor(communities?.get(n.id))
+              : colorFor(n.label);
+          }}
           nodeOpacity={nodeOpacity3D as any}
           linkColor={linkColor}
           linkWidth={linkWidth}
@@ -366,17 +400,35 @@ export default function Graph() {
         />
       )}
       <div className="legend">
-        <div className="legend-title">Entities</div>
-        {labelCounts.map(({ label, n }) => (
-          <div className="legend-row" key={label}>
-            <span
-              className="legend-dot"
-              style={{ background: LABEL_COLOR[label] ?? '#3a3a3a' }}
-            />
-            <span className="legend-label">{label}</span>
-            <span className="legend-n">{n}</span>
-          </div>
-        ))}
+        {colorMode === 'label' ? (
+          <>
+            <div className="legend-title">Entities</div>
+            {labelCounts.map(({ label, n }) => (
+              <div className="legend-row" key={label}>
+                <span
+                  className="legend-dot"
+                  style={{ background: LABEL_COLOR[label] ?? '#3a3a3a' }}
+                />
+                <span className="legend-label">{label}</span>
+                <span className="legend-n">{n}</span>
+              </div>
+            ))}
+          </>
+        ) : (
+          <>
+            <div className="legend-title">Communities</div>
+            {communityStats.map(({ idx, n }) => (
+              <div className="legend-row" key={idx}>
+                <span
+                  className="legend-dot"
+                  style={{ background: communityColor(idx) }}
+                />
+                <span className="legend-label">Cluster {idx + 1}</span>
+                <span className="legend-n">{n}</span>
+              </div>
+            ))}
+          </>
+        )}
         <div className="legend-divider" />
         <div className="legend-title">Edges</div>
         <div className="legend-row">
@@ -390,10 +442,20 @@ export default function Graph() {
           <span className="legend-n">{edgeCounts.refers}</span>
         </div>
       </div>
-      <button className="mode-toggle" onClick={toggleMode}>
-        <span className={`mode-segment${!is3D ? ' active' : ''}`}>2D</span>
-        <span className={`mode-segment${is3D ? ' active' : ''}`}>3D</span>
-      </button>
+      <div className="mode-stack">
+        <button className="mode-toggle" onClick={toggleColorMode} title="Colour by">
+          <span className={`mode-segment${colorMode === 'label' ? ' active' : ''}`}>
+            Label
+          </span>
+          <span className={`mode-segment${colorMode === 'community' ? ' active' : ''}`}>
+            Cluster
+          </span>
+        </button>
+        <button className="mode-toggle" onClick={toggleMode} title="Render mode">
+          <span className={`mode-segment${!is3D ? ' active' : ''}`}>2D</span>
+          <span className={`mode-segment${is3D ? ' active' : ''}`}>3D</span>
+        </button>
+      </div>
       {hover && selectedId == null && (
         <div className="hover-card">
           <div className="hover-name">{hover.name}</div>

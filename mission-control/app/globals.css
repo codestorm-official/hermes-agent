@@ -457,11 +457,19 @@ main {
   text-transform: none;
 }
 
-/* ---- 2D/3D mode toggle ---- */
-.mode-toggle {
+/* ---- 2D/3D + colour-mode toggles ---- */
+.mode-stack {
   position: absolute;
   bottom: 20px;
   right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+  z-index: 3;
+}
+
+.mode-toggle {
   display: flex;
   gap: 0;
   background: rgba(17, 17, 17, 0.85);
@@ -470,7 +478,6 @@ main {
   padding: 2px;
   cursor: pointer;
   backdrop-filter: blur(10px);
-  z-index: 3;
 }
 
 .mode-segment {
