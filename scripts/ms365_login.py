@@ -17,13 +17,18 @@ After this bootstrap, upload `ms365_tokens.json` to Railway:
        chmod 600 /data/.hermes/ms365_tokens.json"
 
 Usage:
-    python scripts/ms365_login.py
+    python scripts/ms365_login.py --mailbox abirnbaum     # default
+    python scripts/ms365_login.py --mailbox instandhaltung
     # optional: MS365_CRED_FILE=/path/to/creds.json to override default
 
-Reads creds file with tenant_id, client_id, client_secret, email.
+Reads creds file with tenant_id, client_id, client_secret, email. The
+same Azure app registration serves every mailbox - just log in as the
+mailbox account (Instandhaltung@... with its own password, etc.) when
+the browser prompt comes up.
 """
 from __future__ import annotations
 
+import argparse
 import http.server
 import json
 import os
@@ -50,6 +55,15 @@ DEFAULT_CRED = Path(
 REDIRECT_HOST = "localhost"
 REDIRECT_PORT = 8400
 REDIRECT_URI = f"http://{REDIRECT_HOST}:{REDIRECT_PORT}/callback"
+
+MAILBOX_HINTS: dict[str, str] = {
+    "abirnbaum": "abirnbaum@buero-birnbaum.de",
+    "instandhaltung": "Instandhaltung@buero-birnbaum.de",
+}
+OUT_NAMES: dict[str, str] = {
+    "abirnbaum": "ms365_tokens.json",
+    "instandhaltung": "ms365_tokens_instandhaltung.json",
+}
 
 
 class _CallbackHandler(http.server.BaseHTTPRequestHandler):
@@ -81,6 +95,16 @@ class _CallbackHandler(http.server.BaseHTTPRequestHandler):
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Bootstrap MS365 token cache for a named mailbox.")
+    parser.add_argument(
+        "--mailbox",
+        default="abirnbaum",
+        choices=sorted(OUT_NAMES),
+        help="Which mailbox to authenticate. Determines output filename. Default: abirnbaum.",
+    )
+    args = parser.parse_args()
+    mailbox = args.mailbox
+
     cred_path = Path(os.environ.get("MS365_CRED_FILE", DEFAULT_CRED))
     if not cred_path.exists():
         print(f"ERROR: credentials file not found: {cred_path}", file=sys.stderr)
@@ -111,7 +135,8 @@ def main() -> int:
     t.start()
 
     print(f"Waiting on {REDIRECT_URI}")
-    print(f"Sign in as: {creds.get('email', '(buero account)')}")
+    print(f"Target mailbox: {mailbox}")
+    print(f"Sign in as: {MAILBOX_HINTS.get(mailbox, creds.get('email', '(buero account)'))}")
     print("Opening browser...")
     print(f"(If it doesn't open: {flow['auth_uri']})")
     try:
@@ -141,7 +166,7 @@ def main() -> int:
         print(json.dumps(result, indent=2), file=sys.stderr)
         return 5
 
-    out = Path("ms365_tokens.json")
+    out = Path(OUT_NAMES[mailbox])
     out.write_text(cache.serialize(), encoding="utf-8")
     print(f"OK - wrote {out.resolve()}")
     return 0

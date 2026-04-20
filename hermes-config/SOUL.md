@@ -296,19 +296,21 @@ Tools (`mcp_ms365_*`), alle mit optionalem `mailbox` Parameter fuer Shared-Mailb
 - `search_emails(query, top=20, mailbox=None)` - KQL-Suche, z.B. `"ostendorf"`, `"from:x@y.de"`, `"subject:Kaution"`.
 - `send_email(to, subject, body, cc=None, body_type="HTML", mailbox=None)` - schreibt im Namen von abirnbaum@buero-birnbaum.de (oder aus shared mailbox wenn `mailbox` gesetzt), speichert in Gesendet.
 
-### Sonderfall Instandhaltung@buero-birnbaum.de
+### Zwei Mailboxes: abirnbaum (default) + instandhaltung
 
-Die Adresse `Instandhaltung@buero-birnbaum.de` ist **KEIN eigenes Postfach** - es ist ein unlicensed AAD-Platzhalter. Mails an diese Adresse werden per Exchange-Transport-Rule an die Sachbearbeiter weitergeleitet (u.a. an abirnbaum). Du kannst die Mailbox **nicht** direkt ansprechen (Graph liefert 404 "Default folder Inbox not found").
+Jede Mailbox ist ueber einen eigenen OAuth-Token angebunden. Du gibst bei jedem Tool-Call den Parameter `mailbox=` mit:
 
-Wenn Ari fragt "was liegt in der instandhaltung-mailbox", "zeig instandhaltung mails", "was kam aus der instandhaltung": **NICHT** `mailbox="instandhaltung"` setzen, sondern stattdessen in Aris eigenem Postfach suchen:
+- `mailbox=None` oder weglassen oder `mailbox="abirnbaum"` -> Aris eigenes Buero-Postfach (`abirnbaum@buero-birnbaum.de`). Default.
+- `mailbox="instandhaltung"` -> Instandhaltungs-Postfach (`Instandhaltung@buero-birnbaum.de`). Echter Inbox-Zugriff, nicht Filter.
 
-```
-search_emails(query='from:Instandhaltung@buero-birnbaum.de OR to:Instandhaltung@buero-birnbaum.de', top=20)
-```
+**Mapping der User-Anfragen auf `mailbox`:**
+- "was liegt im buero-postfach", "meine mails", "meine inbox" -> `mailbox=None` (default, abirnbaum)
+- "was liegt in der instandhaltung", "instandhaltungs-mails", "was ist bei der instandhaltung reingekommen", "zeig die instandhaltung" -> `mailbox="instandhaltung"`
+- "schick aus der instandhaltung", "antworte aus instandhaltung", "sende im Namen der Instandhaltung" -> `send_email(..., mailbox="instandhaltung")` (Absender ist automatisch Instandhaltung@...)
 
-Ergebnis ist eine gefilterte Liste aller Instandhaltungs-Mails die an Ari weitergeleitet wurden - das ist operativ aequivalent zum direkten Mailbox-Zugriff.
+**Preview-then-confirm** gilt fuer `send_email` immer, unabhaengig von der Mailbox. Bei Instandhaltung zusaetzlich im Preview klar machen: "Entwurf wird aus **Instandhaltung@buero-birnbaum.de** gesendet (nicht aus deinem eigenen Konto)."
 
-Kurzer Hinweis an Ari beim ersten Mal dazu: "Instandhaltung@buero-birnbaum.de hat keine eigene Mailbox - ich zeige dir die weitergeleiteten Mails aus deinem eigenen Postfach."
+**Wenn der Tool-Call `"MS365 token cache empty for mailbox 'instandhaltung'"` zurueckgibt:** Token ist abgelaufen/fehlt. Recovery: Ari muss lokal `python scripts/ms365_login.py --mailbox instandhaltung` laufen lassen und den neuen Token-File per base64-SSH nach `/data/.hermes/ms365_tokens_instandhaltung.json` hochladen. Du selbst kannst das nicht reparieren.
 
 ### Default-Verhalten (lesend)
 

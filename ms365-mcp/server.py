@@ -1,13 +1,16 @@
 """Hermes MS365 (Outlook Mail) MCP server.
 
-Exposes four delegated-auth Microsoft Graph tools for the buero-birnbaum
-mailbox: list, read, search, send. Token acquisition is device-code flow
-bootstrapped once locally (see scripts/ms365_login.py) and written into
-the Railway persistent volume at $HERMES_HOME/ms365_tokens.json. MSAL
-refreshes silently on every call; the cache is re-serialised whenever
-state changes. httpx drives the REST endpoints directly - the official
-msgraph-sdk-python pulls a heavy async stack we don't need for four
-synchronous calls.
+Exposes four delegated-auth Microsoft Graph tools. Each call picks a
+mailbox by name (default "abirnbaum"); the server keeps one MSAL token
+cache per mailbox so every Graph request runs against `/me` - i.e. the
+signed-in user's own Exchange Online inbox. No /users/{upn} routing, no
+Mail.Read.Shared magic: the mailbox-per-token model sidesteps shared-
+mailbox delegation entirely.
+
+Tokens are bootstrapped once locally via
+`scripts/ms365_login.py --mailbox <name>`, which writes to the
+corresponding cache file below. MSAL refreshes silently per call;
+caches are re-serialised whenever state changes.
 """
 from __future__ import annotations
 
@@ -21,13 +24,19 @@ from msal import ConfidentialClientApplication, PublicClientApplication, Seriali
 
 CLIENT_ID = os.environ["MS365_CLIENT_ID"]
 TENANT_ID = os.environ["MS365_TENANT_ID"]
-# Optional - when present, we switch to ConfidentialClientApplication, which
-# is required whenever the Azure app registration is a Web/confidential
-# client (the usual default). Refresh calls then include the secret
-# automatically. Leave unset for public-client-only app registrations.
+# Present when the Azure app registration is Web/confidential (our case).
+# MSAL wires it into refresh requests automatically. Unset -> public client.
 CLIENT_SECRET = os.environ.get("MS365_CLIENT_SECRET")
 HERMES_HOME = Path(os.environ.get("HERMES_HOME", "/data/.hermes"))
-CACHE_PATH = HERMES_HOME / "ms365_tokens.json"
+
+# Known mailboxes, each with its own OAuth token cache. Add a row here +
+# run `scripts/ms365_login.py --mailbox <name>` to onboard another
+# mailbox (kundendienst, info, ...). No code changes elsewhere required.
+MAILBOXES: dict[str, Path] = {
+    "abirnbaum": HERMES_HOME / "ms365_tokens.json",
+    "instandhaltung": HERMES_HOME / "ms365_tokens_instandhaltung.json",
+}
+DEFAULT_MAILBOX = "abirnbaum"
 
 SCOPES = [
     "Mail.Read",
@@ -38,81 +47,79 @@ SCOPES = [
     "User.ReadBasic.All",
 ]
 GRAPH = "https://graph.microsoft.com/v1.0"
-
-
-def _mailbox_prefix(mailbox: str | None) -> str:
-    """Resolve the Graph path prefix for a given mailbox reference.
-
-    `None` (default) -> `/me`, i.e. the signed-in user's own mailbox
-    (abirnbaum@buero-birnbaum.de).
-
-    Any other value is treated as a shared-mailbox UPN or id and routed
-    via `/users/<id>`. The signed-in user must have delegated access to
-    the shared mailbox (Exchange admin grants this), and the token must
-    carry `Mail.Read.Shared` / `Mail.Send.Shared` - both covered by the
-    consent granted via scripts/ms365_login.py.
-
-    Common callers use the short alias 'instandhaltung' for
-    'instandhaltung@buero-birnbaum.de' - we expand it for ergonomics.
-    """
-    if not mailbox or mailbox == "me":
-        return "/me"
-    if "@" not in mailbox:
-        mailbox = f"{mailbox}@buero-birnbaum.de"
-    return f"/users/{mailbox}"
-
-_cache = SerializableTokenCache()
-if CACHE_PATH.exists():
-    _cache.deserialize(CACHE_PATH.read_text(encoding="utf-8"))
-
-_authority = f"https://login.microsoftonline.com/{TENANT_ID}"
-if CLIENT_SECRET:
-    _app = ConfidentialClientApplication(
-        client_id=CLIENT_ID,
-        client_credential=CLIENT_SECRET,
-        authority=_authority,
-        token_cache=_cache,
-    )
-else:
-    _app = PublicClientApplication(
-        client_id=CLIENT_ID,
-        authority=_authority,
-        token_cache=_cache,
-    )
+_AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
 
 mcp = FastMCP("hermes-ms365")
 
-
-def _persist_cache() -> None:
-    if _cache.has_state_changed:
-        HERMES_HOME.mkdir(parents=True, exist_ok=True)
-        CACHE_PATH.write_text(_cache.serialize(), encoding="utf-8")
+# Lazy-initialised per-mailbox clients. Lazy so a missing cache for one
+# mailbox doesn't prevent the other from working.
+_clients: dict[str, tuple[Any, SerializableTokenCache, Path]] = {}
 
 
-def _access_token() -> str:
-    accounts = _app.get_accounts()
+def _resolve_mailbox(mailbox: str | None) -> str:
+    """Normalise the mailbox argument to a registry key."""
+    if not mailbox or mailbox == "me":
+        return DEFAULT_MAILBOX
+    key = mailbox.split("@", 1)[0].lower()
+    if key not in MAILBOXES:
+        raise RuntimeError(
+            f"Unknown mailbox {mailbox!r}. Known: {sorted(MAILBOXES)}. "
+            "To onboard a new one: add it to MAILBOXES and run "
+            "`scripts/ms365_login.py --mailbox <name>`."
+        )
+    return key
+
+
+def _client_for(mailbox: str) -> tuple[Any, SerializableTokenCache, Path]:
+    if mailbox in _clients:
+        return _clients[mailbox]
+    path = MAILBOXES[mailbox]
+    cache = SerializableTokenCache()
+    if path.exists():
+        cache.deserialize(path.read_text(encoding="utf-8"))
+    if CLIENT_SECRET:
+        app = ConfidentialClientApplication(
+            client_id=CLIENT_ID,
+            client_credential=CLIENT_SECRET,
+            authority=_AUTHORITY,
+            token_cache=cache,
+        )
+    else:
+        app = PublicClientApplication(
+            client_id=CLIENT_ID,
+            authority=_AUTHORITY,
+            token_cache=cache,
+        )
+    _clients[mailbox] = (app, cache, path)
+    return _clients[mailbox]
+
+
+def _access_token(mailbox: str) -> str:
+    app, cache, path = _client_for(mailbox)
+    accounts = app.get_accounts()
     if not accounts:
         raise RuntimeError(
-            f"MS365 token cache empty at {CACHE_PATH}. "
-            "Run scripts/ms365_login.py locally and upload the file to "
-            "/data/.hermes/ms365_tokens.json via base64-SSH."
+            f"MS365 token cache empty for mailbox {mailbox!r} at {path}. "
+            f"Run `python scripts/ms365_login.py --mailbox {mailbox}` "
+            f"locally, then upload the resulting JSON to {path} via base64-SSH."
         )
-    result = _app.acquire_token_silent(scopes=SCOPES, account=accounts[0])
+    result = app.acquire_token_silent(scopes=SCOPES, account=accounts[0])
     if not result or "access_token" not in result:
-        # Refresh token itself expired (90d rolling inactivity window) or
-        # was revoked. Re-bootstrap is the only recovery path.
         raise RuntimeError(
-            "MS365 silent token refresh failed. Re-run scripts/ms365_login.py "
-            f"locally and replace {CACHE_PATH}. Detail: {result!r}"
+            f"MS365 silent token refresh failed for {mailbox!r}. "
+            f"Re-run `python scripts/ms365_login.py --mailbox {mailbox}`. "
+            f"Detail: {result!r}"
         )
-    _persist_cache()
+    if cache.has_state_changed:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(cache.serialize(), encoding="utf-8")
     return result["access_token"]
 
 
-def _graph_get(path: str, params: dict[str, Any] | None = None) -> dict:
+def _graph_get(path: str, mailbox: str, params: dict[str, Any] | None = None) -> dict:
     r = httpx.get(
         f"{GRAPH}{path}",
-        headers={"Authorization": f"Bearer {_access_token()}"},
+        headers={"Authorization": f"Bearer {_access_token(mailbox)}"},
         params=params,
         timeout=30.0,
     )
@@ -120,11 +127,11 @@ def _graph_get(path: str, params: dict[str, Any] | None = None) -> dict:
     return r.json()
 
 
-def _graph_post(path: str, body: dict[str, Any]) -> None:
+def _graph_post(path: str, mailbox: str, body: dict[str, Any]) -> None:
     r = httpx.post(
         f"{GRAPH}{path}",
         headers={
-            "Authorization": f"Bearer {_access_token()}",
+            "Authorization": f"Bearer {_access_token(mailbox)}",
             "Content-Type": "application/json",
         },
         json=body,
@@ -155,9 +162,9 @@ def list_recent_emails(
 ) -> dict:
     """List the most recent messages from a mailbox's Inbox.
 
-    `mailbox`: None (default) = Ari's own buero-birnbaum inbox;
-    `"instandhaltung"` or any UPN like `"instandhaltung@buero-birnbaum.de"`
-    = shared mailbox (requires delegated access, already in scope).
+    `mailbox`: None/"me" (default) = `abirnbaum` mailbox;
+    `"instandhaltung"` = Instandhaltung mailbox. Known mailboxes are
+    registered in server.py MAILBOXES; unknown names raise an error.
 
     Returns subject, sender, received timestamp, preview (~255 chars) and
     read/attachment flags - enough for the agent to triage without a
@@ -167,6 +174,7 @@ def list_recent_emails(
     Use `read_email(message_id, mailbox=...)` afterwards to fetch the
     full body; pass the same `mailbox` there.
     """
+    mbox = _resolve_mailbox(mailbox)
     top = max(1, min(50, top))
     params: dict[str, Any] = {
         "$top": top,
@@ -175,9 +183,9 @@ def list_recent_emails(
     }
     if unread_only:
         params["$filter"] = "isRead eq false"
-    data = _graph_get(f"{_mailbox_prefix(mailbox)}/mailFolders/inbox/messages", params=params)
+    data = _graph_get("/me/mailFolders/inbox/messages", mbox, params=params)
     return {
-        "mailbox": mailbox or "me",
+        "mailbox": mbox,
         "count": len(data.get("value", [])),
         "messages": [_trim_msg(m) for m in data.get("value", [])],
     }
@@ -190,12 +198,12 @@ def read_email(message_id: str, mailbox: str | None = None) -> dict:
 
     `message_id` is the opaque id returned by list_recent_emails or
     search_emails. Pass the same `mailbox` used in those calls.
-    Marking-as-read is NOT performed - callers that want read-receipt
-    semantics should add that explicitly (out of scope v1).
+    Marking-as-read is NOT performed.
     """
-    prefix = _mailbox_prefix(mailbox)
+    mbox = _resolve_mailbox(mailbox)
     m = _graph_get(
-        f"{prefix}/messages/{message_id}",
+        f"/me/messages/{message_id}",
+        mbox,
         params={
             "$select": (
                 "id,subject,from,toRecipients,ccRecipients,receivedDateTime,"
@@ -209,6 +217,7 @@ def read_email(message_id: str, mailbox: str | None = None) -> dict:
     body = m.get("body") or {}
     result = {
         "id": m.get("id"),
+        "mailbox": mbox,
         "subject": m.get("subject"),
         "from": {"name": frm.get("name"), "address": frm.get("address")},
         "to": [{"name": r.get("name"), "address": r.get("address")} for r in to],
@@ -221,7 +230,8 @@ def read_email(message_id: str, mailbox: str | None = None) -> dict:
     }
     if m.get("hasAttachments"):
         atts = _graph_get(
-            f"{prefix}/messages/{message_id}/attachments",
+            f"/me/messages/{message_id}/attachments",
+            mbox,
             params={"$select": "id,name,size,contentType,isInline"},
         )
         result["attachments"] = [
@@ -251,9 +261,11 @@ def search_emails(query: str, top: int = 20, mailbox: str | None = None) -> dict
     Note: $search + $orderby are mutually exclusive on Graph. Ordering
     here is relevance-descending by Graph default.
     """
+    mbox = _resolve_mailbox(mailbox)
     top = max(1, min(50, top))
     data = _graph_get(
-        f"{_mailbox_prefix(mailbox)}/messages",
+        "/me/messages",
+        mbox,
         params={
             "$search": f'"{query}"',
             "$top": top,
@@ -261,7 +273,7 @@ def search_emails(query: str, top: int = 20, mailbox: str | None = None) -> dict
         },
     )
     return {
-        "mailbox": mailbox or "me",
+        "mailbox": mbox,
         "query": query,
         "count": len(data.get("value", [])),
         "messages": [_trim_msg(m) for m in data.get("value", [])],
@@ -279,10 +291,10 @@ def send_email(
 ) -> dict:
     """Send a mail via Graph sendMail.
 
-    `mailbox` None (default) = from abirnbaum@buero-birnbaum.de;
-    `"instandhaltung"` or any shared-mailbox UPN = send *as* that mailbox
-    (needs delegated Send-As permission, already covered by
-    Mail.Send.Shared in consent).
+    `mailbox` None/"me" (default) = send AS abirnbaum;
+    `"instandhaltung"` = send AS Instandhaltung@buero-birnbaum.de.
+    The From-address derives from the chosen mailbox's token - each
+    mailbox authenticates itself, so the sender line matches.
 
     `to` and `cc` are lists of plain addresses. `body_type` is "HTML" or
     "Text". Mail is saved to Sent Items automatically (Graph default).
@@ -294,6 +306,7 @@ def send_email(
     """
     if not to:
         raise ValueError("'to' must contain at least one recipient")
+    mbox = _resolve_mailbox(mailbox)
     body_type = "HTML" if body_type.upper() == "HTML" else "Text"
     payload = {
         "message": {
@@ -307,8 +320,8 @@ def send_email(
         payload["message"]["ccRecipients"] = [
             {"emailAddress": {"address": a}} for a in cc
         ]
-    _graph_post(f"{_mailbox_prefix(mailbox)}/sendMail", payload)
-    return {"ok": True, "mailbox": mailbox or "me", "to": to, "cc": cc or [], "subject": subject}
+    _graph_post("/me/sendMail", mbox, payload)
+    return {"ok": True, "mailbox": mbox, "to": to, "cc": cc or [], "subject": subject}
 
 
 if __name__ == "__main__":
