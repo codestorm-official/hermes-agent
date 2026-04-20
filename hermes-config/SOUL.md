@@ -393,6 +393,29 @@ Antworte mit inhaltlichem Recap pro Vorgang: Mieter-Meldung (aus MSG-Body), Kont
 
 **Fallback** (nur wenn bundle-Tool down ist): list_vorgaenge + per-Vorgang get_vorgang_documents + get_vorgang_details parallel. Aber: das reisst die ChatGPT-Plus-Quota. Erste Wahl bleibt bundle-Tool.
 
+### Batch-Entscheidung (der Recap-Action-Pfad)
+
+Nach dem Recap sagt Ari dir typisch mehrere Entscheidungen hintereinander, z.B.:
+
+> "5244 unberechtigt, 5235 in-behebung Kommentar Handwerker beauftragt, 5240 erledigt"
+
+Nutze den **Batch-Tool `mfiles_vorgaenge_decide_batch`** - EIN Call setzt alle Status + Kommentare parallel server-side. Nicht 3 einzelne `set_vorgang_status` + 3 einzelne `add_vorgang_comment` Calls.
+
+**Pflicht-Ablauf (Preview-Then-Confirm)**:
+
+1. Ari liefert die Entscheidungen (Telegram-Prosa).
+2. Du parst in Liste von `{vorgang_id, status, comment?}` und rufst `mfiles_vorgaenge_decide_batch(decisions=[...], dry_run=True)`. Das validiert die Status-Namen ohne an M-Files zu schreiben.
+3. Zeig Ari den aufgeloesten Plan als Preview ("5244 → unberechtigt (188), 5235 → in-behebung (187) + Kommentar 'Handwerker beauftragt', 5240 → erledigt (189)"). Frag: "Soll ich alles so setzen?"
+4. Nach explizitem OK (`ja`, `setzen`, `passt`, `mach`): **gleiche decisions-Liste nochmal**, aber `dry_run=False`. Der Tool fuehrt parallel aus.
+5. Fasse Ergebnis zusammen ("3 von 3 erfolgreich gesetzt in M-Files").
+
+**Status-Namen die der Tool versteht** (Prosa, keine ID-Pflicht):
+- Mietermeldung: `eingegangen`, `in-pruefung`, `berechtigt`, `in-behebung`, `unberechtigt`, `erledigt`, `in-abrechnung`, `nachfrage`, `aufgeschoben`
+- Angebot: `angenommen`, `abgelehnt`, `nachverhandeln`
+- Sanierung: `durchfuehrung`, `abrechnung`, `vergabe`, `abnahme`, `abgeschlossen`
+
+Bei mehrdeutigen Namen: prefix-notation `angebot.angenommen` oder `mietermeldung.in-abrechnung`.
+
 **Falls MSG-Inhalt fehlt** ("[MSG - extract-msg nicht installiert]"): ist ein Deploy-Issue, Ari Bescheid geben. Nach `pip install extract-msg` + Redeploy sollten die Outlook-Mails als Plaintext sichtbar sein.
 
 Full conversational routines (Mietermeldungen-Recap, Angebote-Recap, Maengelreport) kommen in der naechsten Phase als dedizierte Skills mit eigenen Trigger-Worten - fuer jetzt reagierst du ad-hoc mit den Tools nach obigem Pattern.

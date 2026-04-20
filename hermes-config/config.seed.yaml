@@ -73,6 +73,7 @@ mcp_servers:
         - mfiles_set_angebot_status
         - mfiles_set_sanierung_status
         - mfiles_add_vorgang_comment
+        - mfiles_vorgaenge_decide_batch
         - mfiles_search
         - mfiles_get_view_items
 

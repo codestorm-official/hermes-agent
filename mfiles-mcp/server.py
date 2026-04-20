@@ -2810,6 +2810,174 @@ async def mfiles_vorgaenge_recap_bundle(params: VorgaengeRecapBundleInput) -> st
 
 
 # =============================================================================
+# Batched decide/action tool. Motivation: after Ari looks at a recap he
+# usually dispatches multiple decisions at once - "5244 unberechtigt,
+# 5235 in-behebung, 5240 erledigt". Without a batch tool Hermes fires
+# one set_vorgang_status call per decision (+ optional add_vorgang_comment),
+# each triggering an LLM roundtrip. 3 decisions = 6 tool calls and 6+ LLM
+# turns. This tool accepts the whole list and executes it server-side in
+# one gather. 3 decisions -> 1 MCP call, 1-2 LLM turns.
+# =============================================================================
+
+
+_STATUS_MAPS_COMBINED = {
+    **{f"mietermeldung.{k}": v for k, v in MIETERMELDUNG_STATUS_MAP.items()},
+    **{f"angebot.{k}": v for k, v in ANGEBOT_STATUS_MAP.items()},
+    **{f"sanierung.{k}": v for k, v in SANIERUNG_STATUS_MAP.items()},
+    **MIETERMELDUNG_STATUS_MAP,
+    **ANGEBOT_STATUS_MAP,
+    **SANIERUNG_STATUS_MAP,
+}
+
+
+def _resolve_status(status: Any) -> Optional[int]:
+    """Accepts either a status_id (int) or a status name string and
+    resolves it to the M-Files state id.
+
+    Supports short names ("unberechtigt" -> 188) via the three status maps
+    defined in models.py as well as namespaced names ("angebot.angenommen"
+    -> 208) for disambiguation when an ambiguous label could map to
+    different ids.
+    """
+    if isinstance(status, int):
+        return status
+    if isinstance(status, str):
+        key = status.strip().lower().replace(" ", "-").replace("_", "-")
+        if key.isdigit():
+            return int(key)
+        return _STATUS_MAPS_COMBINED.get(key)
+    return None
+
+
+class VorgangDecision(BaseModel):
+    """Single decision inside a batch."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    vorgang_id: int = Field(..., description="M-Files ID des Vorgangs.")
+    status: Any = Field(
+        ...,
+        description=(
+            "Zielstatus. Entweder numerische PropertyDef-39-ID (z.B. 188) oder "
+            "Name-String (z.B. 'unberechtigt', 'in-behebung', 'angenommen', "
+            "'abgelehnt'). Bei mehrdeutigen Namen: 'angebot.angenommen' oder "
+            "'mietermeldung.unberechtigt' etc."
+        ),
+    )
+    comment: Optional[str] = Field(
+        default=None,
+        description="Optionaler Kommentar der vor dem Status-Push an den Vorgang angehaengt wird."
+    )
+    object_type: int = Field(
+        default=139,
+        description="M-Files Objekttyp. Default 139 (Vorgaenge). Aenderung selten noetig."
+    )
+    workflow_id: Optional[int] = Field(
+        default=None,
+        description="Optional. Wenn None: Client liest den aktuellen Workflow des Objekts - das ist der empfohlene Default."
+    )
+
+
+class VorgaengeDecideBatchInput(BaseModel):
+    """Input for mfiles_vorgaenge_decide_batch."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    decisions: List[VorgangDecision] = Field(
+        ...,
+        description="Liste der auszufuehrenden Entscheidungen. Alle parallel via asyncio.gather."
+    )
+    dry_run: bool = Field(
+        default=False,
+        description="Wenn True: nur validieren (Status-Namen aufloesen, IDs pruefen), aber nicht setzen. Fuer Preview-Then-Confirm Flow nuetzlich - Hermes kann Ari den geplanten Run zeigen bevor er tatsaechlich an M-Files geht."
+    )
+
+
+@mcp.tool(
+    name="mfiles_vorgaenge_decide_batch",
+    annotations={
+        "title": "Mehrere Vorgaenge entscheiden (Batch)",
+        "readOnlyHint": False,
+        "destructiveHint": False,  # Status-change, reversible
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def mfiles_vorgaenge_decide_batch(params: VorgaengeDecideBatchInput) -> str:
+    """Setzt Workflow-Status und optional Kommentare fuer mehrere Vorgaenge in EINEM Aufruf.
+
+    Wann verwenden: nach einem Recap, wenn Ari mehrere Entscheidungen
+    hintereinander mitteilt ("5244 unberechtigt, 5235 in-behebung Kommentar
+    Handwerker beauftragt, 5240 erledigt"). Hermes parst das in eine
+    decisions-Liste und ruft diesen EINEN Tool auf. Alle Status-Pushes +
+    Kommentare laufen parallel server-side.
+
+    **Preview-Then-Confirm (SOUL-Pflicht)**: Vor diesem Aufruf **IMMER**
+    `dry_run=True` setzen und Ari den aufgeloesten Plan zeigen. Erst nach
+    explizitem OK den echten Run (`dry_run=False`).
+
+    Returns:
+        JSON mit `results` (pro decision: ok, final_status_id, error?)
+        und `total`, `succeeded`, `failed`, `dry_run`.
+    """
+    client = await get_client()
+    results: List[Dict[str, Any]] = []
+
+    async def _one(d: VorgangDecision) -> Dict[str, Any]:
+        state_id = _resolve_status(d.status)
+        if state_id is None:
+            return {
+                "vorgang_id": d.vorgang_id,
+                "requested_status": d.status,
+                "ok": False,
+                "error": f"Unbekannter Status '{d.status}'. Bekannte: {sorted(_STATUS_MAPS_COMBINED.keys())[:20]}...",
+            }
+        if params.dry_run:
+            return {
+                "vorgang_id": d.vorgang_id,
+                "requested_status": d.status,
+                "resolved_status_id": state_id,
+                "comment_preview": d.comment,
+                "ok": True,
+                "dry_run": True,
+            }
+
+        # Real run: optional comment BEFORE state change (comments stay
+        # readable in the old-state context if the state transition would
+        # strip PropertyDef 33).
+        comment_ok = True
+        comment_error: Optional[str] = None
+        if d.comment:
+            try:
+                comment_ok = await client.add_comment(d.object_type, d.vorgang_id, d.comment)
+            except Exception as e:
+                comment_ok = False
+                comment_error = str(e)
+
+        status_result = await client.set_workflow_status(
+            d.object_type, d.vorgang_id, state_id, workflow_id=d.workflow_id
+        )
+        return {
+            "vorgang_id": d.vorgang_id,
+            "requested_status": d.status,
+            "resolved_status_id": state_id,
+            "ok": bool(status_result.get("ok")),
+            "error": status_result.get("error"),
+            "comment_set": comment_ok,
+            "comment_error": comment_error,
+        }
+
+    results = list(await asyncio.gather(*[_one(d) for d in params.decisions], return_exceptions=False))
+
+    payload = {
+        "total": len(results),
+        "succeeded": sum(1 for r in results if r.get("ok")),
+        "failed": sum(1 for r in results if not r.get("ok")),
+        "dry_run": params.dry_run,
+        "results": results,
+    }
+    return json.dumps(payload, indent=2, ensure_ascii=False)
+
+
+# =============================================================================
 # Main Entry Point
 # =============================================================================
 
