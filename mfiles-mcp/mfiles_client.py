@@ -1613,18 +1613,24 @@ class MFilesClient:
             }
             vorgaenge.append(vorgang)
 
-        # If we need property details/filtering, fetch props for each
-        if property_filter or True:  # Always fetch for summary info
-            enriched = []
-            for v in vorgaenge:
-                details = await self._get_vorgang_summary(type_id, v['id'], v['name'])
-                if details:
-                    if property_filter:
-                        linked = details.get('linked_properties', [])
-                        if not any(property_filter.lower() in lp.lower() for lp in linked):
-                            continue
-                    enriched.append(details)
-            vorgaenge = enriched
+        # Fetch property details for each Vorgang in parallel. Sequential
+        # fetch here (the original implementation) pushed list_vorgaenge
+        # into 30s+ timeout territory whenever there were 50+ Vorgaenge,
+        # triggering Hermes to mark the MCP unreachable on Telegram calls.
+        summaries = await asyncio.gather(
+            *(self._get_vorgang_summary(type_id, v['id'], v['name']) for v in vorgaenge),
+            return_exceptions=True,
+        )
+        enriched: List[Dict[str, Any]] = []
+        for details in summaries:
+            if isinstance(details, Exception) or not details:
+                continue
+            if property_filter:
+                linked = details.get('linked_properties', [])
+                if not any(property_filter.lower() in lp.lower() for lp in linked):
+                    continue
+            enriched.append(details)
+        vorgaenge = enriched
 
         self._set_cached(cache_key, vorgaenge)
         logger.info(f"Found {len(vorgaenge)} Vorgänge")
