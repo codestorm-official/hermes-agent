@@ -13,6 +13,20 @@ agent:
 
 data_dir: "/data/.hermes"
 
+# Fallback provider. When the primary LLM (Codex OAuth via ChatGPT Plus)
+# returns HTTP 429 (rate limit), auth errors, or 5xx after retries, Hermes
+# automatically switches to the direct OpenAI API for the rest of the
+# session. Next session starts fresh with Codex OAuth again - effectively
+# a "only when Plus quota is full" escape hatch. Ari explicitly authorised
+# this override of the default "no paid API keys" rule so Telegram stays
+# responsive during peak usage. Costs depend on tokens used; typical
+# bundle-tool-shaped calls run ~$0.01-0.05 per turn on gpt-4o.
+fallback_model:
+  provider: custom
+  model: gpt-4o
+  base_url: https://api.openai.com/v1
+  key_env: OPENAI_API_KEY
+
 # Graph MCP server. Launches a stdio-based FastMCP subprocess inside the
 # container; the server wraps Neo4j with five read-only Cypher tools so
 # Hermes can ask "what do I know about X" during reasoning. Gated on
