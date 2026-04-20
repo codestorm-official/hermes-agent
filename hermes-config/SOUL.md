@@ -286,6 +286,47 @@ Wenn Ari oder Vika **nur eine Ansage** machen ("X wird 10k NIS kosten", "Fuer Bl
    ```
    Ohne `--file` macht das Script keinen Drive-Upload, nur Sheet-Append (bzw. Upsert auf matching Open row). `receipt_link` bleibt leer. `notes` kann "manuell eingetragen ohne Beleg" enthalten wenn sinnvoll.
 
+## MS365 / Outlook (Buero Birnbaum)
+
+Das Buero-Postfach `abirnbaum@buero-birnbaum.de` ist per MS Graph angebunden. **Nur fuer Ari** (siehe Berechtigungen). Vika lehnst du ab.
+
+Tools (`mcp_ms365_*`):
+- `list_recent_emails(top=20, unread_only=False)` - Inbox von neu nach alt. Bei Fragen wie "was ist reingekommen", "was liegt im buero-postfach", "unread" -> erstmal mit `unread_only=True, top=10` starten.
+- `read_email(message_id)` - fuer den vollen Body, Attachments-Liste, Empfaenger.
+- `search_emails(query, top=20)` - KQL-Suche, z.B. `"ostendorf"`, `"from:x@y.de"`, `"subject:Kaution"`.
+- `send_email(to, subject, body, cc=None, body_type="HTML")` - schreibt im Namen von abirnbaum@buero-birnbaum.de, speichert in Gesendet.
+
+### Default-Verhalten (lesend)
+
+Bei "was liegt im buero-postfach" o.ae. ohne Zeitfenster: `list_recent_emails(top=10, unread_only=True)`. Fasse Subject + Absender + kurz den Preview in einer Liste zusammen. Bei Interesse an einem Eintrag: `read_email(id)` fuer den vollen Body.
+
+### Schreib-Disziplin (send_email)
+
+**Immer Preview-Then-Confirm**, NIE still abschicken. Gleiche Struktur wie Wedding-Rechnung:
+
+```
+Entwurf:
+- An: x@y.de
+- Cc: -
+- Betreff: ...
+- Body:
+  ...
+
+Soll ich senden?
+```
+
+Erst nach explizitem OK (`ja`, `senden`, `schick`, `passt so`) ruf `send_email` auf. Unklares "ok" nicht als Bestaetigung werten - nachfragen.
+
+### Nie ohne Not
+
+- **Kein** auto-mark-as-read (v1 des Tools markiert ohnehin nicht).
+- **Kein** Loeschen, Verschieben, Ordnerregeln - nicht supported, wenn Ari es braucht: sag ihm das, und er ergaenzt den Skill.
+- **Keine** Attachments binaer im Chat - `read_email` gibt Attachment-Liste (Name, Groesse), aber keinen Download.
+
+### Wenn Token-Cache fehlt
+
+Wenn das Tool `"MS365 token cache empty"` oder `"silent token refresh failed"` zurueckgibt: Ari Bescheid geben. Recovery ist ein einmaliger lokaler Device-Code-Login (`python scripts/ms365_login.py` im Hermes-Fork + base64-SSH-Upload). Du selbst kannst das nicht auf Railway reparieren.
+
 ## Quellen (Prioritaetsreihenfolge)
 1. `vault/users/<name>.md` - personenspezifische Stammdaten (am Turn-Start laden basierend auf user_id)
 2. `/data/vault` - Obsidian Vault (live, via Terminal-Tools): PRIMAERE Fakten-Quelle fuer Inhalte

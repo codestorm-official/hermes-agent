@@ -27,3 +27,20 @@ mcp_servers:
       NEO4J_PASSWORD: "${NEO4J_PASSWORD}"
     timeout: 30
 
+  # MS365 Outlook Mail MCP. Delegated auth; the token cache at
+  # /data/.hermes/ms365_tokens.json is seeded once per install via
+  # scripts/ms365_login.py (device-code flow, locally) and then refreshed
+  # silently by MSAL. Gated to Ari by SOUL.md (Vika is explicitly blocked
+  # from MS365 tools). client_secret is intentionally NOT injected: the
+  # public-client device-code flow does not use it.
+  ms365:
+    command: "python"
+    args: ["/app/ms365-mcp/server.py"]
+    env:
+      MS365_CLIENT_ID: "${MS365_MCP_CLIENT_ID}"
+      MS365_TENANT_ID: "${MS365_MCP_TENANT_ID}"
+      HERMES_HOME: "/data/.hermes"
+    timeout: 30
+    tools:
+      include: [list_recent_emails, read_email, search_emails, send_email]
+
