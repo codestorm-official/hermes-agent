@@ -2177,6 +2177,37 @@ async def mfiles_get_vorgang_documents(params: GetVorgangDocumentsInput) -> str:
                             doc_result.text_content = content.decode('latin-1')
                         except Exception:
                             doc_result.text_content = "[Konnte Textdatei nicht dekodieren]"
+                elif ext == 'msg':
+                    # Outlook Message files. Most Mietermeldungen arrive as
+                    # forwarded emails - without this branch the body stays
+                    # binary and Hermes can't do a semantic recap.
+                    try:
+                        import extract_msg
+                        import io
+                        msg = extract_msg.openMsg(io.BytesIO(content))
+                        parts = []
+                        if msg.sender:
+                            parts.append(f"Von: {msg.sender}")
+                        if msg.to:
+                            parts.append(f"An: {msg.to}")
+                        if msg.cc:
+                            parts.append(f"Cc: {msg.cc}")
+                        if msg.date:
+                            parts.append(f"Datum: {msg.date}")
+                        if msg.subject:
+                            parts.append(f"Betreff: {msg.subject}")
+                        body = msg.body or ""
+                        if not body and getattr(msg, 'htmlBody', None):
+                            # Fallback: strip HTML very crudely
+                            import re
+                            body = re.sub(r'<[^>]+>', '', msg.htmlBody or '')
+                        parts.append("")
+                        parts.append(body.strip())
+                        doc_result.text_content = "\n".join(parts)
+                    except ImportError:
+                        doc_result.text_content = "[MSG - extract-msg nicht installiert]"
+                    except Exception as e:
+                        doc_result.text_content = f"[Fehler bei MSG-Extraktion: {e}]"
                 else:
                     doc_result.text_content = f"[Binaerdatei: {doc['name']}.{ext}, {len(content)} bytes]"
 

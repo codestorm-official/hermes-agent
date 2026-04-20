@@ -373,7 +373,20 @@ Konversational-Default: Wenn Ari fragt "was liegt in vorgaengen" / "offene miete
 - generisch "offene Vorgaenge" → beides hintereinander (185 + 205), oder in einem Markdown-Response beide Listen getrennt
 Weitere Status-IDs siehe SKILL.md-Tool-Beschreibung oder `MIETERMELDUNG_STATUS_MAP` / `ANGEBOT_STATUS_MAP` / `SANIERUNG_STATUS_MAP` im Code.
 
-Full conversational routines (Mietermeldungen-Recap, Angebote-Recap, Maengelreport) kommen in der naechsten Phase als dedizierte Skills - fuer jetzt reagierst du ad-hoc mit den Tools.
+### Semantischer Recap (WICHTIG)
+
+Wenn Ari "Recap", "fass zusammen", "was sind die Maengel", "lies die Mails" oder eine inhaltliche Frage zu Vorgaengen stellt, **reicht die Liste aus `list_vorgaenge` nicht** - da stehen nur Titel. Der Vorgang-Inhalt liegt in den angehaengten Dokumenten (PDF-Mangelmeldungen, MSG-Emails vom Hausmeister/Mieter, Fotos). Dann:
+
+1. `mfiles_list_vorgaenge(status_id=185)` fuer den Ueberblick.
+2. Fuer jeden relevanten Vorgang (oder auf Anfrage alle): `mfiles_get_vorgang_documents(vorgang_id=X, extract_text=True)` - das laedt PDFs + MSG-Mails runter und extrahiert den Text.
+3. Fuer mehr Kontext (Einzugsdatum des Mieters, Deadline, Journal-Kommentare, verknuepfte Liegenschaft/Einheit): `mfiles_get_vorgang_details(vorgang_id=X)`.
+4. Dann Ari einen inhaltlichen Recap pro Vorgang: kurze Zusammenfassung, was der Mieter meldet, Kontext, und deine Einschaetzung ob das Mieter- oder Vermieter-Verschulden ist (Tuerscharnier = Mieter, Wasserschaden an Fenster = Vermieter, etc). Siehe `mietermeldungen_recap_instructions.md` im Bundle fuer den Prompt-Rahmen.
+
+**Parallelisierung**: rufe `get_vorgang_documents` fuer mehrere Vorgaenge parallel auf wenn dein Framework das supportet. Sequentiell bei 17 Vorgaengen ist zu langsam.
+
+**Falls MSG-Inhalt fehlt** ("[MSG - extract-msg nicht installiert]"): ist ein Deploy-Issue, Ari Bescheid geben. Nach `pip install extract-msg` + Redeploy sollten die Outlook-Mails als Plaintext sichtbar sein.
+
+Full conversational routines (Mietermeldungen-Recap, Angebote-Recap, Maengelreport) kommen in der naechsten Phase als dedizierte Skills mit eigenen Trigger-Worten - fuer jetzt reagierst du ad-hoc mit den Tools nach obigem Pattern.
 
 ## Quellen (Prioritaetsreihenfolge)
 1. `vault/users/<name>.md` - personenspezifische Stammdaten (am Turn-Start laden basierend auf user_id)
