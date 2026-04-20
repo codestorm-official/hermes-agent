@@ -17,25 +17,67 @@ from typing import Any
 
 import httpx
 from fastmcp import FastMCP
-from msal import PublicClientApplication, SerializableTokenCache
+from msal import ConfidentialClientApplication, PublicClientApplication, SerializableTokenCache
 
 CLIENT_ID = os.environ["MS365_CLIENT_ID"]
 TENANT_ID = os.environ["MS365_TENANT_ID"]
+# Optional - when present, we switch to ConfidentialClientApplication, which
+# is required whenever the Azure app registration is a Web/confidential
+# client (the usual default). Refresh calls then include the secret
+# automatically. Leave unset for public-client-only app registrations.
+CLIENT_SECRET = os.environ.get("MS365_CLIENT_SECRET")
 HERMES_HOME = Path(os.environ.get("HERMES_HOME", "/data/.hermes"))
 CACHE_PATH = HERMES_HOME / "ms365_tokens.json"
 
-SCOPES = ["Mail.Read", "Mail.Send", "User.Read"]
+SCOPES = [
+    "Mail.Read",
+    "Mail.Send",
+    "Mail.Read.Shared",
+    "Mail.Send.Shared",
+    "User.Read",
+]
 GRAPH = "https://graph.microsoft.com/v1.0"
+
+
+def _mailbox_prefix(mailbox: str | None) -> str:
+    """Resolve the Graph path prefix for a given mailbox reference.
+
+    `None` (default) -> `/me`, i.e. the signed-in user's own mailbox
+    (abirnbaum@buero-birnbaum.de).
+
+    Any other value is treated as a shared-mailbox UPN or id and routed
+    via `/users/<id>`. The signed-in user must have delegated access to
+    the shared mailbox (Exchange admin grants this), and the token must
+    carry `Mail.Read.Shared` / `Mail.Send.Shared` - both covered by the
+    consent granted via scripts/ms365_login.py.
+
+    Common callers use the short alias 'instandhaltung' for
+    'instandhaltung@buero-birnbaum.de' - we expand it for ergonomics.
+    """
+    if not mailbox or mailbox == "me":
+        return "/me"
+    if "@" not in mailbox:
+        mailbox = f"{mailbox}@buero-birnbaum.de"
+    return f"/users/{mailbox}"
 
 _cache = SerializableTokenCache()
 if CACHE_PATH.exists():
     _cache.deserialize(CACHE_PATH.read_text(encoding="utf-8"))
 
-_app = PublicClientApplication(
-    client_id=CLIENT_ID,
-    authority=f"https://login.microsoftonline.com/{TENANT_ID}",
-    token_cache=_cache,
-)
+_authority = f"https://login.microsoftonline.com/{TENANT_ID}"
+if CLIENT_SECRET:
+    _app = ConfidentialClientApplication(
+        client_id=CLIENT_ID,
+        client_credential=CLIENT_SECRET,
+        authority=_authority,
+        token_cache=_cache,
+    )
+else:
+    _app = PublicClientApplication(
+        client_id=CLIENT_ID,
+        authority=_authority,
+        token_cache=_cache,
+    )
 
 mcp = FastMCP("hermes-ms365")
 
@@ -105,15 +147,24 @@ def _trim_msg(m: dict) -> dict:
 
 
 @mcp.tool()
-def list_recent_emails(top: int = 20, unread_only: bool = False) -> dict:
-    """List the most recent messages from the Inbox.
+def list_recent_emails(
+    top: int = 20,
+    unread_only: bool = False,
+    mailbox: str | None = None,
+) -> dict:
+    """List the most recent messages from a mailbox's Inbox.
+
+    `mailbox`: None (default) = Ari's own buero-birnbaum inbox;
+    `"instandhaltung"` or any UPN like `"instandhaltung@buero-birnbaum.de"`
+    = shared mailbox (requires delegated access, already in scope).
 
     Returns subject, sender, received timestamp, preview (~255 chars) and
     read/attachment flags - enough for the agent to triage without a
     second read call. `top` is clamped to [1, 50]. When `unread_only` is
     True, only messages with isRead=false are returned.
 
-    Use `read_email(message_id)` afterwards to fetch the full body.
+    Use `read_email(message_id, mailbox=...)` afterwards to fetch the
+    full body; pass the same `mailbox` there.
     """
     top = max(1, min(50, top))
     params: dict[str, Any] = {
@@ -123,21 +174,27 @@ def list_recent_emails(top: int = 20, unread_only: bool = False) -> dict:
     }
     if unread_only:
         params["$filter"] = "isRead eq false"
-    data = _graph_get("/me/mailFolders/inbox/messages", params=params)
-    return {"count": len(data.get("value", [])), "messages": [_trim_msg(m) for m in data.get("value", [])]}
+    data = _graph_get(f"{_mailbox_prefix(mailbox)}/mailFolders/inbox/messages", params=params)
+    return {
+        "mailbox": mailbox or "me",
+        "count": len(data.get("value", [])),
+        "messages": [_trim_msg(m) for m in data.get("value", [])],
+    }
 
 
 @mcp.tool()
-def read_email(message_id: str) -> dict:
+def read_email(message_id: str, mailbox: str | None = None) -> dict:
     """Fetch a single message in full, including the HTML body, recipients
     and attachment metadata (name + size only, no binary content).
 
     `message_id` is the opaque id returned by list_recent_emails or
-    search_emails. Marking-as-read is NOT performed - callers that want
-    read-receipt semantics should add that explicitly (out of scope v1).
+    search_emails. Pass the same `mailbox` used in those calls.
+    Marking-as-read is NOT performed - callers that want read-receipt
+    semantics should add that explicitly (out of scope v1).
     """
+    prefix = _mailbox_prefix(mailbox)
     m = _graph_get(
-        f"/me/messages/{message_id}",
+        f"{prefix}/messages/{message_id}",
         params={
             "$select": (
                 "id,subject,from,toRecipients,ccRecipients,receivedDateTime,"
@@ -163,7 +220,7 @@ def read_email(message_id: str) -> dict:
     }
     if m.get("hasAttachments"):
         atts = _graph_get(
-            f"/me/messages/{message_id}/attachments",
+            f"{prefix}/messages/{message_id}/attachments",
             params={"$select": "id,name,size,contentType,isInline"},
         )
         result["attachments"] = [
@@ -180,8 +237,10 @@ def read_email(message_id: str) -> dict:
 
 
 @mcp.tool()
-def search_emails(query: str, top: int = 20) -> dict:
-    """Full-text search across the mailbox (subject + body + sender).
+def search_emails(query: str, top: int = 20, mailbox: str | None = None) -> dict:
+    """Full-text search across a mailbox (subject + body + sender).
+
+    `mailbox` follows the same convention as list_recent_emails.
 
     Uses Graph's KQL `$search` parameter, which must be quoted. Examples
     for `query`: `ostendorf`, `from:ostendorf@ra-ostendorf.de`, `subject:Kaution`,
@@ -193,14 +252,19 @@ def search_emails(query: str, top: int = 20) -> dict:
     """
     top = max(1, min(50, top))
     data = _graph_get(
-        "/me/messages",
+        f"{_mailbox_prefix(mailbox)}/messages",
         params={
             "$search": f'"{query}"',
             "$top": top,
             "$select": "id,subject,from,receivedDateTime,bodyPreview,isRead,hasAttachments",
         },
     )
-    return {"query": query, "count": len(data.get("value", [])), "messages": [_trim_msg(m) for m in data.get("value", [])]}
+    return {
+        "mailbox": mailbox or "me",
+        "query": query,
+        "count": len(data.get("value", [])),
+        "messages": [_trim_msg(m) for m in data.get("value", [])],
+    }
 
 
 @mcp.tool()
@@ -210,8 +274,14 @@ def send_email(
     body: str,
     cc: list[str] | None = None,
     body_type: str = "HTML",
+    mailbox: str | None = None,
 ) -> dict:
-    """Send a mail from abirnbaum@buero-birnbaum.de via Graph sendMail.
+    """Send a mail via Graph sendMail.
+
+    `mailbox` None (default) = from abirnbaum@buero-birnbaum.de;
+    `"instandhaltung"` or any shared-mailbox UPN = send *as* that mailbox
+    (needs delegated Send-As permission, already covered by
+    Mail.Send.Shared in consent).
 
     `to` and `cc` are lists of plain addresses. `body_type` is "HTML" or
     "Text". Mail is saved to Sent Items automatically (Graph default).
@@ -236,8 +306,8 @@ def send_email(
         payload["message"]["ccRecipients"] = [
             {"emailAddress": {"address": a}} for a in cc
         ]
-    _graph_post("/me/sendMail", payload)
-    return {"ok": True, "to": to, "cc": cc or [], "subject": subject}
+    _graph_post(f"{_mailbox_prefix(mailbox)}/sendMail", payload)
+    return {"ok": True, "mailbox": mailbox or "me", "to": to, "cc": cc or [], "subject": subject}
 
 
 if __name__ == "__main__":

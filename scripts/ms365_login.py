@@ -1,41 +1,82 @@
-"""One-shot MS365 device-code bootstrap.
+"""One-shot MS365 auth-code bootstrap (Confidential Client).
 
-Run locally from a machine with a browser. Loads the buero M365 creds,
-walks the user through the device-code prompt, and writes
-`ms365_tokens.json` to the current directory. Upload that file into the
-Railway persistent volume at /data/.hermes/ms365_tokens.json via the
-base64-inline SSH trick (see reference_hermes_railway.md Gotcha #7).
+Runs a short-lived HTTP server on http://localhost:8400/callback, opens
+the Microsoft login page in the default browser, captures the
+authorization code from the redirect, and exchanges it for a token
+cache. Writes `ms365_tokens.json` to the current directory.
 
-After that first bootstrap, MSAL's refresh flow keeps the cache alive as
-long as Ari uses Hermes regularly (Azure's rolling inactivity window is
-~90 days for refresh tokens).
+Azure prerequisite (one-time):
+    App registration > Authentication > Platform configurations > Web >
+    Redirect URIs must include:  http://localhost:8400/callback
+
+After this bootstrap, upload `ms365_tokens.json` to Railway:
+    B64=$(base64 -w0 ms365_tokens.json)
+    cd /c/Users/aribi/code/hermes-setup
+    MSYS_NO_PATHCONV=1 railway ssh --service hermes-agent \\
+      "echo '$B64' | base64 -d > /data/.hermes/ms365_tokens.json && \\
+       chmod 600 /data/.hermes/ms365_tokens.json"
 
 Usage:
-    # Credentials file path can be overridden via MS365_CRED_FILE.
     python scripts/ms365_login.py
+    # optional: MS365_CRED_FILE=/path/to/creds.json to override default
 
-Reads:
-    C:/Users/aribi/OneDrive/Desktop/chaim-private-credentials/.buero_m365_credentials.json
-    (tenant_id, client_id, email; client_secret is NOT used - this is a
-     public-client device-code flow).
-
-Writes:
-    ./ms365_tokens.json
+Reads creds file with tenant_id, client_id, client_secret, email.
 """
 from __future__ import annotations
 
+import http.server
 import json
 import os
 import sys
+import threading
+import urllib.parse
+import webbrowser
 from pathlib import Path
 
-from msal import PublicClientApplication, SerializableTokenCache
+from msal import ConfidentialClientApplication, SerializableTokenCache
 
-SCOPES = ["Mail.Read", "Mail.Send", "User.Read"]
+SCOPES = [
+    "Mail.Read",
+    "Mail.Send",
+    "Mail.Read.Shared",
+    "Mail.Send.Shared",
+    "User.Read",
+]
 DEFAULT_CRED = Path(
     "C:/Users/aribi/OneDrive/Desktop/chaim-private-credentials/"
-    ".buero_m365_credentials.json"
+    ".hermes_m365_credentials.json"
 )
+REDIRECT_HOST = "localhost"
+REDIRECT_PORT = 8400
+REDIRECT_URI = f"http://{REDIRECT_HOST}:{REDIRECT_PORT}/callback"
+
+
+class _CallbackHandler(http.server.BaseHTTPRequestHandler):
+    """Captures the first /callback hit and exposes its query params."""
+
+    captured: dict[str, str] | None = None
+
+    def do_GET(self) -> None:  # noqa: N802 (http.server naming)
+        if not self.path.startswith("/callback"):
+            self.send_response(404)
+            self.end_headers()
+            return
+        qs = urllib.parse.urlparse(self.path).query
+        params = {k: v[0] for k, v in urllib.parse.parse_qs(qs).items()}
+        type(self).captured = params
+        body = (
+            b"<html><body style='font-family:sans-serif;padding:2em'>"
+            b"<h2>OK - du kannst dieses Fenster schliessen.</h2>"
+            b"<p>Token wird jetzt im Terminal erzeugt.</p></body></html>"
+        )
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args) -> None:  # silence access logs
+        return
 
 
 def main() -> int:
@@ -45,40 +86,63 @@ def main() -> int:
         return 1
     creds = json.loads(cred_path.read_text(encoding="utf-8"))
 
+    secret = creds.get("client_secret")
+    if not secret:
+        print("ERROR: client_secret missing from credentials file", file=sys.stderr)
+        return 1
+
     cache = SerializableTokenCache()
-    app = PublicClientApplication(
+    app = ConfidentialClientApplication(
         client_id=creds["client_id"],
+        client_credential=secret,
         authority=f"https://login.microsoftonline.com/{creds['tenant_id']}",
         token_cache=cache,
     )
 
-    flow = app.initiate_device_flow(scopes=SCOPES)
-    if "user_code" not in flow:
-        print("ERROR: device flow init failed", file=sys.stderr)
+    flow = app.initiate_auth_code_flow(scopes=SCOPES, redirect_uri=REDIRECT_URI)
+    if "auth_uri" not in flow:
+        print("ERROR: auth code flow init failed", file=sys.stderr)
         print(json.dumps(flow, indent=2), file=sys.stderr)
         return 2
 
-    print(flow["message"])
-    print(f"Sign in as: {creds.get('email', '(buero account)')}")
-    print("Waiting for consent...")
+    server = http.server.HTTPServer((REDIRECT_HOST, REDIRECT_PORT), _CallbackHandler)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
 
-    result = app.acquire_token_by_device_flow(flow)
-    if "access_token" not in result:
-        print("ERROR: token acquisition failed", file=sys.stderr)
-        print(json.dumps(result, indent=2), file=sys.stderr)
+    print(f"Waiting on {REDIRECT_URI}")
+    print(f"Sign in as: {creds.get('email', '(buero account)')}")
+    print("Opening browser...")
+    print(f"(If it doesn't open: {flow['auth_uri']})")
+    try:
+        webbrowser.open(flow["auth_uri"])
+    except Exception:
+        pass
+
+    # Block until the callback handler grabs the code.
+    import time
+
+    deadline = time.time() + 300  # 5 min
+    while _CallbackHandler.captured is None and time.time() < deadline:
+        time.sleep(0.5)
+    server.shutdown()
+
+    captured = _CallbackHandler.captured
+    if not captured:
+        print("ERROR: no callback received within 5 minutes", file=sys.stderr)
         return 3
+    if "error" in captured:
+        print(f"ERROR: auth server returned: {captured}", file=sys.stderr)
+        return 4
+
+    result = app.acquire_token_by_auth_code_flow(flow, captured)
+    if "access_token" not in result:
+        print("ERROR: token exchange failed", file=sys.stderr)
+        print(json.dumps(result, indent=2), file=sys.stderr)
+        return 5
 
     out = Path("ms365_tokens.json")
     out.write_text(cache.serialize(), encoding="utf-8")
     print(f"OK - wrote {out.resolve()}")
-    print(
-        "Next: upload via base64-SSH:\n"
-        "  B64=$(base64 -w0 ms365_tokens.json) && \\\n"
-        "  cd /c/Users/aribi/code/hermes-setup && \\\n"
-        "  MSYS_NO_PATHCONV=1 railway ssh --service hermes-agent \\\n"
-        "    \"echo '$B64' | base64 -d > /data/.hermes/ms365_tokens.json && \\\n"
-        "     chmod 600 /data/.hermes/ms365_tokens.json\""
-    )
     return 0
 
 
