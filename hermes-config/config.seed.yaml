@@ -17,13 +17,15 @@ data_dir: "/data/.hermes"
 # returns HTTP 429 (rate limit), auth errors, or 5xx after retries, Hermes
 # automatically switches to the direct OpenAI API for the rest of the
 # session. Next session starts fresh with Codex OAuth again - effectively
-# a "only when Plus quota is full" escape hatch. Ari explicitly authorised
-# this override of the default "no paid API keys" rule so Telegram stays
-# responsive during peak usage. Costs depend on tokens used; typical
-# bundle-tool-shaped calls run ~$0.01-0.05 per turn on gpt-4o.
+# a "only when Plus quota is full" escape hatch.
+#
+# Model: gpt-5.4 (reasoning-capable). gpt-4o rejected with "Encrypted
+# content is not supported with this model" - Codex produces encrypted
+# reasoning blocks that only reasoning-capable fallbacks accept.
+# gpt-5.4 matches what Ari uses in ChatGPT Plus directly.
 fallback_model:
   provider: custom
-  model: gpt-4o
+  model: gpt-5.4
   base_url: https://api.openai.com/v1
   key_env: OPENAI_API_KEY
 
