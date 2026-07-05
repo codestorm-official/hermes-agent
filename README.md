@@ -8,9 +8,6 @@ Deploy [Hermes Agent](https://github.com/NousResearch/hermes-agent) on [Railway]
 
 > Hermes Agent is an autonomous AI agent by [Nous Research](https://nousresearch.com/) that lives on your server, connects to your messaging channels (Telegram, Discord, Slack, etc.), and gets more capable the longer it runs.
 
-<!-- TODO: Add dashboard screenshot -->
-<!-- ![Dashboard](docs/dashboard.png) -->
-
 ## Features
 
 - **Admin Dashboard** — dark-themed UI to configure providers, channels, tools, and manage the gateway
@@ -54,21 +51,36 @@ Hermes Agent interacts entirely through messaging channels — there is no chat 
 
 ### 4. Configure in the Admin Dashboard
 
-1. **LLM Provider** — select OpenRouter from the dropdown, paste your API key, enter the model name
-2. **Messaging Channel** — check Telegram, paste the Bot Token from BotFather
-3. Click **Save & Start** — the gateway will start and your bot goes live
-   
-    ![Hermes Setup](./img/setup-provider.png)
+1. **LLM Provider** — select OpenRouter, paste the API key, load or enter a
+   model, then run **Test Connection**.
+
+   ![Configure LLM Provider](./img/setup-provider.png)
+
+2. **Messaging Channel** — enable Telegram, paste the Bot Token, then run
+   **Test Channels**.
+
+   ![Configure Messaging Channel](./img/setup-channel.png)
+
+3. Review the configuration and diagnostics, then click **Save & Start**.
+
+   ![Review and Save Setup](./img/review-save-start.png)
+
+After initial setup, use **Add Provider** or **Add Channel** without repeating
+the entire wizard.
+
+![Add Provider or Channel](./img/add-provider-channel-after-setup.png)
 
 ### 5. Check Status & Logs
+
 - Status cards show gateway state, uptime, and model
+
   ![Hermes Status](./img/status.png)
 
 - Logs panel streams gateway stdout/stderr for debugging and monitoring
 
   ![Hermes Logs](./img/logs.png)
 
-### 5. Start Chatting
+### 6. Start Chatting
 
 After **Save & Start** reports that the gateway is running, message your
 Telegram bot. If you are not already allowed, a pairing request will appear
@@ -78,14 +90,18 @@ under **Users**:
 2. Review the Telegram username and user ID.
 3. Click **Approve**.
 
-![Hermes Pairing](./img/pending-request.png)
+Before a request is received, the Users page displays an empty pairing state:
+
+![Empty Pairing Requests](./img/pending-request.png)
+
+After an unauthorized user messages the bot, the request appears with
+**Approve** and **Deny** actions:
+
+![Pending User Pairing](./img/users.png)
 
 The **Users** page is always accessible, including before initial setup, but it
 will remain empty until a configured messaging channel receives a pairing
 request. If **Allow all users** is enabled, pairing approval is skipped.
-
-<!-- TODO: Add Telegram chat screenshot -->
-<!-- ![Telegram Example](docs/telegram-example.png) -->
 
 ## Environment Variables
 
