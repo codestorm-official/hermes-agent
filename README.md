@@ -15,11 +15,15 @@ Deploy [Hermes Agent](https://github.com/NousResearch/hermes-agent) on [Railway]
 
 - **Admin Dashboard** — dark-themed UI to configure providers, channels, tools, and manage the gateway
 - **One-Page Setup** — provider dropdown, checkbox-based channel/tool toggles — no config files to edit
+- **Provider Model Picker** — verify an API key and load available models directly from the provider
+- **Multi-Provider Switching** — store multiple provider keys and choose exactly one active provider from Status
+- **Safe Integration Management** — add or remove providers and channels with active/last-item protection
+- **Non-Destructive Config** — dashboard updates are merged into `config.yaml` without discarding unrelated Hermes settings
 - **Gateway Management** — start, stop, restart the Hermes gateway from the browser
 - **Live Status** — stat cards for gateway state, uptime, model, and pending pairing requests
 - **Live Logs** — streaming gateway log viewer
 - **User Pairing** — approve or deny users who message your bot, revoke access anytime
-- **Basic Auth** — password-protected admin panel
+- **Admin Login** — session-based web login with secure logout; Basic Auth remains available for API clients
 - **Reset Config** — one-click reset to start fresh
 
 ## Getting Started
@@ -46,7 +50,7 @@ Hermes Agent interacts entirely through messaging channels — there is no chat 
 
 1. Click the **Deploy on Railway** button above
 2. Set the `ADMIN_USERNAME` and `ADMIN_PASSWORD` environment variables
-3. Open your app URL — log in with username `admin` and your password
+3. Open your app URL — login with username `admin` and your password
 
 ### 4. Configure in the Admin Dashboard
 
@@ -76,14 +80,17 @@ Message your Telegram bot. If you're a new user, a pairing request will appear i
 | Variable         | Default    | Description         |
 | ---------------- | ---------- | ------------------- |
 | `PORT`           | `8080`     | Web server port     |
-| `ADMIN_USERNAME` | `admin`    | Basic auth username |
-| `ADMIN_PASSWORD` | `changeme` | Basic auth password |
+| `ADMIN_USERNAME` | `admin`    | Admin login username |
+| `ADMIN_PASSWORD` | `changeme` | Admin login password |
+| `ADMIN_SESSION_TTL` | `43200` | Web login lifetime in seconds |
+| `ADMIN_SESSION_SECRET` | derived | Optional secret used to sign login sessions |
 
 All other configuration (LLM provider, model, channels, tools) is managed through the admin dashboard.
 
 ## Supported Providers
 
-OpenRouter, DeepSeek, DashScope, GLM / Z.AI, Kimi, MiniMax, HuggingFace
+OpenRouter, OpenAI, Claude / Anthropic, Google Gemini, xAI / Grok, NVIDIA NIM,
+DeepSeek, DashScope, GLM / Z.AI, Kimi, MiniMax, Hugging Face
 
 ## Supported Channels
 
@@ -113,7 +120,7 @@ docker build -t hermes-agent .
 docker run --rm -it -p 8080:8080 -e PORT=8080 -e ADMIN_PASSWORD=changeme -v hermes-data:/data hermes-agent
 ```
 
-Open `http://localhost:8080` and log in with `admin` / `changeme`.
+Open `http://localhost:8080` and login with `admin` / `changeme`.
 
 ## Credits
 

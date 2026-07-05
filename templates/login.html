@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Login — Hermes Admin</title>
+<style>
+  :root {
+    --bg:#0d0f14; --surface:#14181f; --surface2:#1c2230; --border:#252d3d;
+    --text:#c9d1d9; --text-dim:#6b7688; --accent:#6272ff; --accent2:#7b8fff;
+    --red:#f85149;
+  }
+  *, *::before, *::after { box-sizing:border-box; }
+  body {
+    margin:0; min-height:100vh; display:grid; place-items:center; padding:24px;
+    background:
+      radial-gradient(circle at 50% -20%, rgba(98,114,255,.18), transparent 42%),
+      var(--bg);
+    color:var(--text); font-family:Inter, ui-sans-serif, system-ui, sans-serif;
+  }
+  .login-card {
+    width:min(390px,100%); padding:28px; background:var(--surface);
+    border:1px solid var(--border); border-radius:12px;
+    box-shadow:0 24px 80px rgba(0,0,0,.38);
+  }
+  .brand { display:flex; align-items:center; gap:11px; margin-bottom:26px; }
+  .brand-icon {
+    width:34px; height:34px; display:grid; place-items:center; border-radius:8px;
+    color:white; background:linear-gradient(135deg,var(--accent),#864dff);
+    font-family:ui-monospace,monospace; font-weight:700;
+  }
+  .brand-name { font-family:ui-monospace,monospace; font-weight:700; }
+  .brand-name span { color:var(--text-dim); font-weight:400; }
+  h1 { margin:0 0 7px; font-size:20px; }
+  .subtitle { margin:0 0 24px; color:var(--text-dim); font-size:13px; line-height:1.5; }
+  label {
+    display:block; margin:0 0 6px; color:var(--text-dim);
+    font-family:ui-monospace,monospace; font-size:11px; text-transform:uppercase;
+    letter-spacing:.06em;
+  }
+  input {
+    width:100%; margin-bottom:16px; padding:10px 11px; border-radius:7px;
+    border:1px solid var(--border); outline:none; background:var(--bg);
+    color:var(--text); font:13px ui-monospace,monospace;
+  }
+  input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(98,114,255,.12); }
+  button {
+    width:100%; padding:10px; border:1px solid var(--accent); border-radius:7px;
+    background:var(--accent); color:white; cursor:pointer;
+    font:600 13px ui-monospace,monospace;
+  }
+  button:hover { background:var(--accent2); border-color:var(--accent2); }
+  .error {
+    margin:0 0 16px; padding:9px 11px; border:1px solid var(--red);
+    border-radius:7px; color:var(--red); background:rgba(248,81,73,.07);
+    font-size:12px;
+  }
+  .notice {
+    margin:0 0 16px; padding:9px 11px; border:1px solid #d29922;
+    border-radius:7px; color:#d29922; background:rgba(210,153,34,.07);
+    font-size:12px;
+  }
+  .footer {
+    margin-top:20px; text-align:center; color:var(--text-dim);
+    font:11px ui-monospace,monospace;
+  }
+</style>
+</head>
+<body>
+  <main class="login-card">
+    <div class="brand">
+      <div class="brand-icon">H</div>
+      <div class="brand-name">hermes<span>/admin</span></div>
+    </div>
+    <h1>Welcome back</h1>
+    <p class="subtitle">Login to configure and monitor your Hermes Agent.</p>
+
+    {% if error %}
+    <div class="error" role="alert">{{ error }}</div>
+    {% endif %}
+    {% if notice %}
+    <div class="notice" role="status">{{ notice }}</div>
+    {% endif %}
+
+    <form method="post" action="/login">
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text" autocomplete="username"
+             required autofocus>
+
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password"
+             autocomplete="current-password" required>
+
+      <button type="submit">Login</button>
+    </form>
+    <div class="footer">Protected Hermes administration</div>
+  </main>
+</body>
+</html>
