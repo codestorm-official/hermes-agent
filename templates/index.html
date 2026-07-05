@@ -1118,7 +1118,7 @@
 
         <div class="section-label">Pending Pairing Requests</div>
         <div class="empty-state" x-show="pending.length===0">No pending requests. Unauthorized users who message your bot will appear here.</div>
-        <template x-for="r in pending" :key="r.platform+r.code">
+        <template x-for="r in pending" :key="r.platform+r.request_id">
           <div class="pair-card pending">
             <div style="flex:1;">
               <div style="font-size:13px;font-weight:500;" x-text="r.user_name||r.user_id"></div>
@@ -1129,8 +1129,8 @@
               </div>
             </div>
             <div style="display:flex;gap:8px;">
-              <button class="btn sm success" @click="approve(r.platform,r.code)">Approve</button>
-              <button class="btn sm danger"  @click="deny(r.platform,r.code)">Deny</button>
+              <button class="btn sm success" @click="approve(r.platform,r.request_id)">Approve</button>
+              <button class="btn sm danger"  @click="deny(r.platform,r.request_id)">Deny</button>
             </div>
           </div>
         </template>
@@ -1902,13 +1902,13 @@ function app() {
       window.location.assign('/logout');
     },
 
-    async approve(platform, code) {
-      const r = await fetch('/api/pairing/approve', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({platform,code}) });
+    async approve(platform, request_id) {
+      const r = await fetch('/api/pairing/approve', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({platform,request_id}) });
       if (r.ok) { this.notify('User approved', true); await this.loadPairing(); }
       else { const e = await r.json().catch(()=>{}); this.notify(e?.error||'Failed', false); }
     },
-    async deny(platform, code) {
-      await fetch('/api/pairing/deny', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({platform,code}) });
+    async deny(platform, request_id) {
+      await fetch('/api/pairing/deny', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({platform,request_id}) });
       this.notify('Denied', true); await this.loadPairing();
     },
     async revoke(platform, user_id) {

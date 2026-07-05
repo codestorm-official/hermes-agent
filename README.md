@@ -42,8 +42,8 @@ Hermes Agent interacts entirely through messaging channels — there is no chat 
 
 1. Open Telegram and message [@BotFather](https://t.me/BotFather)
 2. Send `/newbot`, follow the prompts, and copy the **Bot Token**
-3. Send a message to your new bot — it will appear as a pairing request in the admin dashboard
-   ![Hermes Setup](./img/pending-request.png)
+3. Keep the token ready — the bot will not respond until it is configured and
+   the Hermes gateway is started in step 4.
 4. To find your Telegram user ID, message [@userinfobot](https://t.me/userinfobot)
 
 ### 3. Deploy to Railway
@@ -58,7 +58,7 @@ Hermes Agent interacts entirely through messaging channels — there is no chat 
 2. **Messaging Channel** — check Telegram, paste the Bot Token from BotFather
 3. Click **Save & Start** — the gateway will start and your bot goes live
    
-    ![Hermes Setup](./img/setup.png)
+    ![Hermes Setup](./img/setup-provider.png)
 
 ### 5. Check Status & Logs
 - Status cards show gateway state, uptime, and model
@@ -70,7 +70,19 @@ Hermes Agent interacts entirely through messaging channels — there is no chat 
 
 ### 5. Start Chatting
 
-Message your Telegram bot. If you're a new user, a pairing request will appear in the admin dashboard under **Users** — click **Approve**, and you're in.
+After **Save & Start** reports that the gateway is running, message your
+Telegram bot. If you are not already allowed, a pairing request will appear
+under **Users**:
+
+1. Open **Users** in the Admin Dashboard.
+2. Review the Telegram username and user ID.
+3. Click **Approve**.
+
+![Hermes Pairing](./img/pending-request.png)
+
+The **Users** page is always accessible, including before initial setup, but it
+will remain empty until a configured messaging channel receives a pairing
+request. If **Allow all users** is enabled, pairing approval is skipped.
 
 <!-- TODO: Add Telegram chat screenshot -->
 <!-- ![Telegram Example](docs/telegram-example.png) -->
@@ -105,13 +117,18 @@ Parallel (search), Firecrawl (scraping), Tavily (search), FAL (image gen), Brows
 ```
 Railway Container
 ├── Python Admin Server (Starlette + Uvicorn)
-│   ├── /            — Admin dashboard (Basic Auth)
+│   ├── /            — Admin dashboard (Login session)
+│   ├── /login       — Session-based Admin Login
 │   ├── /health      — Health check (no auth)
 │   └── /api/*       — Config, status, logs, gateway, pairing
 └── hermes gateway   — Managed as async subprocess
 ```
 
-The admin server runs on `$PORT` and manages the Hermes gateway as a child process. Config is stored in `/data/.hermes/.env` and `/data/.hermes/config.yaml`. Gateway stdout/stderr is captured into a ring buffer and streamed to the Logs panel.
+The admin server runs on `$PORT` and manages the Hermes gateway as a child
+process. Browser access uses the Admin Login session; Basic Auth remains
+available for API clients that send credentials explicitly. Config is stored in
+`/data/.hermes/.env` and `/data/.hermes/config.yaml`. Gateway stdout/stderr is
+captured into a ring buffer and streamed to the Logs panel.
 
 ## Running Locally
 

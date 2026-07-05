@@ -17,6 +17,7 @@ import secrets
 import shutil
 import ssl
 import signal
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -45,7 +46,8 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 HERMES_HOME = os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))
 ENV_FILE = Path(HERMES_HOME) / ".env"
 CONFIG_FILE = Path(HERMES_HOME) / "config.yaml"
-PAIRING_DIR = Path(HERMES_HOME) / "pairing"
+PAIRING_DIR = Path(HERMES_HOME) / "platforms" / "pairing"
+LEGACY_PAIRING_DIR = Path(HERMES_HOME) / "pairing"
 PAIRING_TTL = 3600
 MAX_PROVIDER_RESPONSE = 8 * 1024 * 1024
 
@@ -985,14 +987,42 @@ def _pjson(path: Path) -> dict:
 
 def _wjson(path: Path, data: dict):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-    try: os.chmod(path, 0o600)
-    except OSError: pass
+    fd, temp_name = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, ensure_ascii=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp_name, 0o600)
+        os.replace(temp_name, path)
+    except BaseException:
+        try: os.unlink(temp_name)
+        except OSError: pass
+        raise
+
+
+def _valid_platform(platform: str) -> bool:
+    return bool(re.fullmatch(r"[a-z0-9_-]+", platform))
+
+
+def _pairing_path(platform: str, suffix: str) -> Path:
+    modern = PAIRING_DIR / f"{platform}-{suffix}.json"
+    legacy = LEGACY_PAIRING_DIR / f"{platform}-{suffix}.json"
+    modern_platform_exists = any(PAIRING_DIR.glob(f"{platform}-*.json")) if PAIRING_DIR.exists() else False
+    if modern.exists() or modern_platform_exists or not legacy.exists():
+        return modern
+    return legacy
 
 
 def _platforms(suffix: str) -> list[str]:
-    if not PAIRING_DIR.exists(): return []
-    return [f.stem.rsplit(f"-{suffix}", 1)[0] for f in PAIRING_DIR.glob(f"*-{suffix}.json")]
+    platforms = set()
+    for directory in (PAIRING_DIR, LEGACY_PAIRING_DIR):
+        if directory.exists():
+            platforms.update(
+                f.stem.rsplit(f"-{suffix}", 1)[0]
+                for f in directory.glob(f"*-{suffix}.json")
+            )
+    return sorted(platform for platform in platforms if _valid_platform(platform))
 
 
 async def api_pairing_pending(request: Request):
@@ -1000,9 +1030,13 @@ async def api_pairing_pending(request: Request):
     now = time.time()
     out = []
     for p in _platforms("pending"):
-        for code, info in _pjson(PAIRING_DIR / f"{p}-pending.json").items():
+        for request_id, info in _pjson(_pairing_path(p, "pending")).items():
+            if not isinstance(info, dict):
+                continue
             if now - info.get("created_at", now) <= PAIRING_TTL:
-                out.append({"platform": p, "code": code,
+                hash_value = info.get("hash", "")
+                display_id = hash_value[:8] if isinstance(hash_value, str) else str(request_id)[:8]
+                out.append({"platform": p, "request_id": request_id, "display_id": display_id,
                             "user_id": info.get("user_id",""), "user_name": info.get("user_name",""),
                             "age_minutes": int((now - info.get("created_at", now)) / 60)})
     return JSONResponse({"pending": out})
@@ -1012,18 +1046,24 @@ async def api_pairing_approve(request: Request):
     if err := guard(request): return err
     try: body = await request.json()
     except Exception: return JSONResponse({"error": "Invalid JSON"}, status_code=400)
-    platform, code = body.get("platform",""), body.get("code","").upper().strip()
-    if not platform or not code:
-        return JSONResponse({"error": "platform and code required"}, status_code=400)
-    pending_path = PAIRING_DIR / f"{platform}-pending.json"
+    platform = str(body.get("platform", "")).lower().strip()
+    request_id = str(body.get("request_id", "")).strip()
+    legacy_code = str(body.get("code", "")).upper().strip()
+    if not _valid_platform(platform) or not (request_id or legacy_code):
+        return JSONResponse({"error": "Valid platform and request_id required"}, status_code=400)
+    pending_path = _pairing_path(platform, "pending")
     pending = _pjson(pending_path)
-    if code not in pending:
-        return JSONResponse({"error": "Code not found"}, status_code=404)
-    entry = pending.pop(code)
+    matched_key = request_id if request_id in pending else legacy_code
+    if matched_key not in pending:
+        return JSONResponse({"error": "Pairing request not found or expired"}, status_code=404)
+    entry = pending.pop(matched_key)
+    if not isinstance(entry, dict) or not entry.get("user_id"):
+        return JSONResponse({"error": "Invalid pairing request"}, status_code=422)
     _wjson(pending_path, pending)
-    approved = _pjson(PAIRING_DIR / f"{platform}-approved.json")
+    approved_path = _pairing_path(platform, "approved")
+    approved = _pjson(approved_path)
     approved[entry["user_id"]] = {"user_name": entry.get("user_name",""), "approved_at": time.time()}
-    _wjson(PAIRING_DIR / f"{platform}-approved.json", approved)
+    _wjson(approved_path, approved)
     return JSONResponse({"ok": True})
 
 
@@ -1031,11 +1071,16 @@ async def api_pairing_deny(request: Request):
     if err := guard(request): return err
     try: body = await request.json()
     except Exception: return JSONResponse({"error": "Invalid JSON"}, status_code=400)
-    platform, code = body.get("platform",""), body.get("code","").upper().strip()
-    p = PAIRING_DIR / f"{platform}-pending.json"
+    platform = str(body.get("platform", "")).lower().strip()
+    request_id = str(body.get("request_id", "")).strip()
+    legacy_code = str(body.get("code", "")).upper().strip()
+    if not _valid_platform(platform):
+        return JSONResponse({"error": "Invalid platform"}, status_code=400)
+    p = _pairing_path(platform, "pending")
     pending = _pjson(p)
-    if code in pending:
-        del pending[code]
+    matched_key = request_id if request_id in pending else legacy_code
+    if matched_key in pending:
+        del pending[matched_key]
         _wjson(p, pending)
     return JSONResponse({"ok": True})
 
@@ -1044,7 +1089,7 @@ async def api_pairing_approved(request: Request):
     if err := guard(request): return err
     out = []
     for p in _platforms("approved"):
-        for uid, info in _pjson(PAIRING_DIR / f"{p}-approved.json").items():
+        for uid, info in _pjson(_pairing_path(p, "approved")).items():
             out.append({"platform": p, "user_id": uid,
                         "user_name": info.get("user_name",""), "approved_at": info.get("approved_at",0)})
     return JSONResponse({"approved": out})
@@ -1055,9 +1100,9 @@ async def api_pairing_revoke(request: Request):
     try: body = await request.json()
     except Exception: return JSONResponse({"error": "Invalid JSON"}, status_code=400)
     platform, uid = body.get("platform",""), body.get("user_id","")
-    if not platform or not uid:
+    if not _valid_platform(platform) or not uid:
         return JSONResponse({"error": "platform and user_id required"}, status_code=400)
-    p = PAIRING_DIR / f"{platform}-approved.json"
+    p = _pairing_path(platform, "approved")
     approved = _pjson(p)
     if uid in approved:
         del approved[uid]
