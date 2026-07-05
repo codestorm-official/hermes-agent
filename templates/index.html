@@ -4,6 +4,17 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Hermes Agent</title>
+<script>
+  (() => {
+    try {
+      const saved = localStorage.getItem('hermes-theme');
+      const preferred = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      document.documentElement.dataset.theme = saved || preferred;
+    } catch (_) {
+      document.documentElement.dataset.theme = 'dark';
+    }
+  })();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -21,10 +32,32 @@
     --green:     #3fb950;
     --yellow:    #d29922;
     --red:       #f85149;
+    --log-bg:    #0a0c10;
+    --overlay:   rgba(0,0,0,.7);
+    --shadow:    rgba(0,0,0,.45);
     --font-mono: 'IBM Plex Mono', monospace;
     --font-sans: 'IBM Plex Sans', sans-serif;
     --sidebar-w: 220px;
     --header-h:  52px;
+    color-scheme: dark;
+  }
+
+  :root[data-theme="light"] {
+    --bg:        #f6f8fa;
+    --surface:   #ffffff;
+    --surface2:  #eef2f7;
+    --border:    #d0d7de;
+    --text:      #24292f;
+    --text-dim:  #667085;
+    --accent:    #4f5eea;
+    --accent2:   #3546d3;
+    --green:     #1a7f37;
+    --yellow:    #9a6700;
+    --red:       #cf222e;
+    --log-bg:    #f0f3f6;
+    --overlay:   rgba(31,35,40,.4);
+    --shadow:    rgba(31,35,40,.18);
+    color-scheme: light;
   }
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -38,6 +71,7 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    transition: background-color .2s ease, color .2s ease;
   }
 
   [x-cloak] { display: none !important; }
@@ -103,6 +137,135 @@
     transition: border-color 0.15s, color 0.15s;
   }
   .header-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  .donate-btn {
+    min-height: 30px;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 12px;
+    border: 1px solid #c83280;
+    border-radius: 6px;
+    background: rgba(200,50,128,.08);
+    color: #ef62aa;
+    font-family: var(--font-sans);
+    font-size: 13px;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background .15s, border-color .15s, transform .15s;
+  }
+  .donate-btn:hover {
+    background: rgba(200,50,128,.16);
+    border-color: #ef62aa;
+    transform: translateY(-1px);
+  }
+  .donate-btn svg { width: 17px; height: 17px; }
+
+  .theme-toggle {
+    width: 32px;
+    height: 32px;
+    display: inline-grid;
+    place-items: center;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: color .15s, background .15s, transform .2s;
+  }
+  .theme-toggle:hover {
+    color: var(--text);
+    background: var(--surface2);
+    transform: rotate(12deg);
+  }
+  .theme-toggle svg { width: 19px; height: 19px; }
+
+  .modal.donate-modal {
+    width: min(1120px, 100%);
+    max-height: min(720px, calc(100vh - 40px));
+    padding: 0;
+    overflow: auto;
+  }
+  .donate-modal-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 18px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .donate-modal-header .panel-title { flex: 1; }
+  .modal-close {
+    width: 32px;
+    height: 32px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 24px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .modal-close:hover { color: var(--text); background: var(--surface2); }
+  .donate-modal-body { padding: 20px; }
+  .donate-intro {
+    max-width: 680px;
+    margin: 0 auto 20px;
+    color: var(--text-dim);
+    line-height: 1.6;
+    text-align: center;
+  }
+  .donate-options {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .donate-option {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px 12px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--bg);
+    text-align: center;
+  }
+  .donate-option-icon {
+    width: 38px;
+    height: 38px;
+    display: grid;
+    place-items: center;
+    margin-bottom: 10px;
+    border-radius: 50%;
+    background: rgba(98,114,255,.13);
+    color: var(--accent2);
+    overflow: hidden;
+  }
+  .donate-option-icon img {
+    width: 21px;
+    height: 21px;
+    display: block;
+    object-fit: contain;
+  }
+  .donate-option-name { font-weight: 600; }
+  .donate-option-copy {
+    min-height: 34px;
+    margin: 5px 0 12px;
+    color: var(--text-dim);
+    font-size: 11px;
+    line-height: 1.45;
+  }
+  .donate-qr {
+    width: min(150px, 100%);
+    aspect-ratio: 1;
+    margin-bottom: 13px;
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: #fff;
+    object-fit: contain;
+  }
+  .donate-open { margin-top: auto; text-decoration: none; }
 
   /* ── Layout ───────────────────────────────────────── */
   #layout {
@@ -396,7 +559,7 @@
     font-size: 12px;
     line-height: 1.6;
     padding: 12px 16px;
-    background: #0a0c10;
+    background: var(--log-bg);
   }
 
   .log-line {
@@ -497,12 +660,12 @@
   #toast.ok  { border-color: var(--green); color: var(--green); }
   #toast.err { border-color: var(--red);   color: var(--red);   }
   .modal-backdrop {
-    position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,.7);
+    position:fixed; inset:0; z-index:1000; background:var(--overlay);
     display:flex; align-items:center; justify-content:center; padding:20px;
   }
   .modal {
     width:min(460px,100%); background:var(--surface); border:1px solid var(--border);
-    border-radius:10px; padding:20px; box-shadow:0 20px 60px rgba(0,0,0,.45);
+    border-radius:10px; padding:20px; box-shadow:0 20px 60px var(--shadow);
   }
 
   /* ── Misc ─────────────────────────────────────────── */
@@ -548,7 +711,7 @@
     position:absolute; z-index:50; top:calc(100% + 6px); left:0; right:0;
     max-height:340px; display:flex; flex-direction:column; padding:10px;
     background:var(--surface2); border:1px solid var(--accent); border-radius:8px;
-    box-shadow:0 16px 40px rgba(0,0,0,.45);
+    box-shadow:0 16px 40px var(--shadow);
   }
   .model-list { overflow-y:auto; margin-top:8px; border-top:1px solid var(--border); }
   .model-option {
@@ -577,10 +740,19 @@
     .wizard-step { padding:9px 6px; text-align:center; }
     .wizard-step span { display:none; }
     .sidebar-actions { grid-template-columns:1fr; padding:0 6px; }
+    #header { padding:0 10px; gap:7px; }
+    .donate-btn span { display:none; }
+    .donate-btn { padding:5px 8px; }
+    .donate-options { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .donate-modal-body { padding:14px; }
+  }
+  @media (max-width: 430px) {
+    .donate-options { grid-template-columns:1fr; }
+    .donate-option-copy { min-height:0; }
   }
 </style>
 </head>
-<body x-data="app()" x-init="init()" x-cloak>
+<body x-data="app()" x-init="init()" @keydown.escape.window="donateModal=false" x-cloak>
 
 <!-- Header -->
 <div id="header">
@@ -591,6 +763,31 @@
   <div id="status-label" x-text="gw.state||'stopped'"></div>
   <div class="header-spacer"></div>
   <button class="header-btn" @click="restartGateway()">↺ Restart</button>
+  <button class="donate-btn"
+     type="button"
+     @click="donateModal=true"
+     aria-label="Open donation options">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M7 11h8a3 3 0 0 1 0 6h-1"/>
+      <path d="M7 11v8h7v-8"/>
+      <path d="M9.2 6.3C8 5.1 8.8 3 10.5 3c.7 0 1.2.4 1.5.9.3-.5.8-.9 1.5-.9 1.7 0 2.5 2.1 1.3 3.3L12 9l-2.8-2.7Z"/>
+      <path d="M4 11h3v8H4z"/>
+    </svg>
+    <span>Donate</span>
+  </button>
+  <button class="theme-toggle"
+          type="button"
+          @click="toggleTheme()"
+          :title="theme === 'dark' ? 'Use light mode' : 'Use dark mode'"
+          :aria-label="theme === 'dark' ? 'Use light mode' : 'Use dark mode'">
+    <svg x-show="theme === 'dark'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="4"></circle>
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"></path>
+    </svg>
+    <svg x-show="theme === 'light'" x-cloak viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5 8.5 8.5 0 1 0 20.5 14.5Z"></path>
+    </svg>
+  </button>
 </div>
 
 <!-- Layout -->
@@ -1174,6 +1371,37 @@
 <!-- Toast -->
 <div id="toast" x-ref="toast"></div>
 
+<!-- Donation options -->
+<div class="modal-backdrop" x-show="donateModal" x-transition.opacity @click.self="donateModal=false">
+  <div class="modal donate-modal" role="dialog" aria-modal="true" aria-labelledby="donate-title">
+    <div class="donate-modal-header">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#ef62aa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M7 11h8a3 3 0 0 1 0 6h-1M7 11v8h7v-8M9.2 6.3C8 5.1 8.8 3 10.5 3c.7 0 1.2.4 1.5.9.3-.5.8-.9 1.5-.9 1.7 0 2.5 2.1 1.3 3.3L12 9 9.2 6.3ZM4 11h3v8H4z"></path>
+      </svg>
+      <div class="panel-title" id="donate-title">Support Hermes Admin</div>
+      <button class="modal-close" type="button" @click="donateModal=false" aria-label="Close donation options">×</button>
+    </div>
+    <div class="donate-modal-body">
+      <p class="donate-intro">If this dashboard makes managing Hermes Agent easier, you can support its continued development through one of the options below. Thank you! ❤️</p>
+      <div class="donate-options">
+        <template x-for="option in donationOptions" :key="option.name">
+          <div class="donate-option">
+            <div class="donate-option-icon">
+              <img :src="option.logo" :alt="option.name+' logo'" loading="lazy">
+            </div>
+            <div class="donate-option-name" x-text="option.name"></div>
+            <div class="donate-option-copy" x-text="option.description"></div>
+            <img class="donate-qr" :src="option.qr" :alt="'QR code for '+option.name" loading="lazy">
+            <a class="btn primary donate-open" :href="option.url" target="_blank" rel="noopener noreferrer">
+              Open ↗
+            </a>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Provider restart confirmation -->
 <div class="modal-backdrop" x-show="switchModal.open" x-transition.opacity @click.self="switchModal.open=false">
   <div class="modal">
@@ -1236,6 +1464,38 @@ function app() {
 
   return {
     page: 'setup',
+    theme: document.documentElement.dataset.theme || 'dark',
+    donateModal: false,
+    donationOptions: [
+      {
+        name: 'Ko-fi',
+        logo: 'https://cdn.simpleicons.org/kofi',
+        description: 'International support via Ko-fi',
+        url: 'https://ko-fi.com/asepsaputra',
+        qr: 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=https%3A%2F%2Fko-fi.com%2Fasepsaputra',
+      },
+      {
+        name: 'Buy Me a Coffee',
+        logo: 'https://cdn.simpleicons.org/buymeacoffee',
+        description: 'International support via Buy Me a Coffee',
+        url: 'https://buymeacoffee.com/asepsaputra',
+        qr: 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=https%3A%2F%2Fbuymeacoffee.com%2Fasepsaputra',
+      },
+      {
+        name: 'Saweria',
+        logo: 'https://saweria.co/favicon.ico',
+        description: 'Local support through Saweria',
+        url: 'https://saweria.co/asepsp',
+        qr: 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=https%3A%2F%2Fsaweria.co%2Fasepsp',
+      },
+      {
+        name: 'PayPal',
+        logo: 'https://cdn.simpleicons.org/paypal',
+        description: 'Direct transfer through PayPal.Me',
+        url: 'https://paypal.me/selaris',
+        qr: 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=https%3A%2F%2Fpaypal.me%2Fselaris',
+      },
+    ],
     vars: {},
     gw: {},
     status: {},
@@ -1258,6 +1518,11 @@ function app() {
     activeModelBeforeAction: '',
     channelTests: {},
     diagnostics: { checks: [], summary: {} },
+    toggleTheme() {
+      this.theme = this.theme === 'dark' ? 'light' : 'dark';
+      document.documentElement.dataset.theme = this.theme;
+      try { localStorage.setItem('hermes-theme', this.theme); } catch (_) {}
+    },
     editingProvider: '',
     switchModal: { open:false, provider:'', model:'' },
     logoutModal: false,
